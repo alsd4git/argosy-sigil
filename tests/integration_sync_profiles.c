@@ -630,7 +630,7 @@ static void check_cemu(void) {
     mem_root root = {0};
     cemu_root(&root);
     game g;
-    make_game(&g, &root, "cemu", "wiiu", WIIU_BOTW);
+    make_game(&g, &root, "cemu", "wiiu", "00050000/" WIIU_BOTW);
     sigil_sync_result *botw = NULL;
     expect_rc("cemu collect", collect(&g, &botw), SIGIL_OK);
     if (!botw || strcmp(botw->profile, "80000001") != 0 || botw->profile_count != 1 ||
@@ -708,6 +708,38 @@ static void check_cemu(void) {
     sigil_sync_result_free(botw);
     root_free(&low_land);
     root_free(&low);
+    root_free(&target);
+    root_free(&root);
+}
+
+/* A demo saves under usr/save/00050002/, which its save id carries; the same
+ * code under 00050000 is another title's. */
+static void check_cemu_demo(void) {
+    mem_root root = {0};
+    put_sample(&root, &g_wiiu, "wiiu", "cemu-account", "act/", CEMU_ACT);
+    put_sample(&root, &g_wiiu, "wiiu", "botw-cemu", NULL, "mlc01/usr/save/00050002/");
+    put_text(&root, CEMU_SAVES WIIU_BOTW "/user/common/full.dat", "the full game");
+    game g;
+    make_game(&g, &root, "cemu", "wiiu", "00050002/" WIIU_BOTW);
+    sigil_sync_result *demo = NULL;
+    expect_rc("cemu demo collect", collect(&g, &demo), SIGIL_OK);
+    if (!unit_all(demo, WIIU_BOTW "/", "80000001", sample_count(&g_wiiu, "botw-cemu")) ||
+        unit_has(demo, WIIU_BOTW "/user/common/full.dat")) {
+        fail("cemu demo collect", "not the save under 00050002 alone");
+    }
+
+    mem_root target = {0};
+    put_sample(&target, &g_wiiu, "wiiu", "cemu-account", "act/", CEMU_ACT);
+    game t;
+    make_game(&t, &target, "cemu", "wiiu", "00050002/" WIIU_BOTW);
+    sigil_sync_result *r = NULL;
+    expect_rc("cemu demo restore", restore(&t, demo, &r), SIGIL_OK);
+    if (!root_find(&target, "mlc01/usr/save/00050002/" WIIU_BOTW "/user/80000001/option.sav") ||
+        root_find(&target, CEMU_SAVES WIIU_BOTW "/user/80000001/option.sav")) {
+        fail("cemu demo restore", "not written under 00050002");
+    }
+    sigil_sync_result_free(r);
+    sigil_sync_result_free(demo);
     root_free(&target);
     root_free(&root);
 }
@@ -1563,6 +1595,7 @@ int main(void) {
     check_conflicts();
     check_area_state();
     check_cemu();
+    check_cemu_demo();
     check_vita3k();
     check_rpcs3();
     check_psp();

@@ -178,15 +178,26 @@ static int try_3ds(const char *stem, size_t len, sigil_result *out) {
     return SIGIL_ERR_NOT_FOUND;
 }
 
+/* A full id's save category, as Cemu's usr/save/<high>/ names it: a demo
+ * (00050002) saves under its own, a game, update or DLC under the game's
+ * 00050000. */
+static const char *wiiu_save_category(const char id16[17]) {
+    return strncmp(id16, "00050002", 8) == 0 ? "00050002" : "00050000";
+}
+
 static int try_wiiu(const char *stem, size_t len, sigil_result *out) {
-    /* Filenames carry the FULL 16-hex; canonical save form is the LAST 8. */
+    /* Filenames carry the FULL 16-hex; canonical save form is the LAST 8. A
+     * bare 8 hex has no category, so save_id is the code alone. */
     char id16[17];
     for (size_t i = 0; i + 18 <= len; i++) {
         if (stem[i] == '[' && match_hex_run(stem, len, i + 1, 16, id16) && stem[i + 17] == ']') {
             if (id16[0] == '0' && id16[1] == '0' && id16[2] == '0' && id16[3] == '5') {
                 memcpy(out->raw_serial, id16, 17);
                 memcpy(out->title_id, id16 + 8, 9);
-                sigil_lower_copy(out->title_id, out->save_id, sizeof(out->save_id));
+                char joined[18];
+                snprintf(joined, sizeof(joined), "%s/%s", wiiu_save_category(id16), out->title_id);
+                sigil_lower_copy(joined, out->save_id, sizeof(out->save_id));
+                out->usage = SIGIL_USAGE_FOLDER_SPLIT;
                 return SIGIL_OK;
             }
         }

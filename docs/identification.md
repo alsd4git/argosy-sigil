@@ -73,7 +73,7 @@ without you re-deriving it.
 | `switch` | Nintendo Switch | `.nsp`, `.xci` | `0100ABCD12345000` | folder-exact | |
 | `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
 | `wii` | Wii | `.iso`, `.rvz`, `.wia`, `.wbfs`, `.wad` | `525A5445` (hex of ASCII gameId); `.wad`: `00010001574B5445` (full 16-hex title id) | folder-split (`save_id` is `<category>/<code>` from the ticket) | |
-| `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-exact | |
+| `wiiu` | Wii U | `.wua` | `10143500` (last 8 of folder name) | folder-split (`save_id` is `<high>/<low>`) | |
 | `gamecube` | GameCube | `.iso`, `.rvz`, `.wia`, `.wbfs` | `475A4C45` (hex of ASCII gameId) | file-prefix | |
 | `xbox` | Xbox | `.xiso`, `.xiso.iso`, `.iso` (needs hint), extracted game folder or `.xbe` | `TT-027` (XBE certificate title id) | folder-exact | experimental |
 | `xbox360` | Xbox 360 | `.zar`, `.iso` (needs hint), extracted game folder or `.xex` | `4D5307DC` (4-byte XEX title_id, hex) | folder-exact | experimental |

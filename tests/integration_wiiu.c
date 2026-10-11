@@ -7,9 +7,10 @@
  * SAME value from the WUA archive footer. The two MUST agree, or one of
  * them is wrong.
  *
- * Cemu names the save directory with "{:08x}", so save_id must be title_id
- * lowercased; an uppercase copy is a second directory on case-sensitive
- * storage and the saves split across the two. */
+ * Cemu names the save directory usr/save/<high>/<low> with "{:08x}", so
+ * save_id is the two halves lowercased; an uppercase copy is a second
+ * directory on case-sensitive storage and the saves split across the two.
+ * Every title here is a game, so every high half is 00050000. */
 
 static int extract_bracket_id(const char *name, char out[17]) {
     size_t len = strlen(name);
@@ -52,18 +53,17 @@ static int check(const char *path, const char *name) {
             return -1;
         }
     }
-    if (strlen(r.save_id) != strlen(r.title_id)) {
+    /* save_id is the title's high half, a game's 00050000, then a slash and
+     * the low half: raw_serial split and lowercased. */
+    char want[18];
+    snprintf(want, sizeof(want), "%.8s/%s", r.raw_serial, r.title_id);
+    for (size_t i = 0; want[i]; i++) {
+        if (want[i] >= 'A' && want[i] <= 'Z') want[i] = (char)(want[i] + 32);
+    }
+    if (strcmp(r.save_id, want) != 0 || strncmp(r.save_id, "00050000/", 9) != 0 ||
+        r.usage != SIGIL_USAGE_FOLDER_SPLIT) {
         fprintf(stderr, "  FAIL %s: save_id=%s title_id=%s\n", name, r.save_id, r.title_id);
         return -1;
-    }
-    for (size_t i = 0; r.title_id[i]; i++) {
-        char want = r.title_id[i];
-        if (want >= 'A' && want <= 'Z') want = (char)(want + 32);
-        if (r.save_id[i] != want) {
-            fprintf(stderr, "  FAIL %s: save_id=%s title_id=%s\n",
-                    name, r.save_id, r.title_id);
-            return -1;
-        }
     }
     fprintf(stdout, "  ok  %s -> %s (raw=%s save=%s)\n",
             name, r.title_id, r.raw_serial, r.save_id);

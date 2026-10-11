@@ -452,21 +452,23 @@ static const char *const WII_SUBDIRS[] = { "User/Wii/title" };
 static const char *const WII_STANDALONE_SUBDIRS[] = { "Wii/title" };
 
 /* Cemu (src/Cafe/TitleList/SaveInfo.cpp, Account.cpp): the mlc's
- * usr/save/00050000/<title low>/ holds meta/, user/<persistent id>/ per
+ * usr/save/<title high>/<title low>/ holds meta/, user/<persistent id>/ per
  * account and user/common/ for every account. Cemu writes meta/ again when
- * the game opens its save. */
+ * the game opens its save. The save id carries the high half, 00050000 for
+ * a game and 00050002 for a demo; one of the code alone takes 00050000. */
 static const sigil_layout_area CEMU_AREAS[] = {
-    { "mlc01/usr/save/00050000/{save_id}/meta/", "{save_id}/meta/", SIGIL_SAVE_AREA_DEVICE, true, NULL },
-    { "mlc01/usr/save/00050000/{save_id}/user/common/", "{save_id}/user/common/", SIGIL_SAVE_AREA_DEVICE, false,
+    { "mlc01/usr/save/{category}/{save_id}/meta/", "{save_id}/meta/", SIGIL_SAVE_AREA_DEVICE, true, NULL },
+    { "mlc01/usr/save/{category}/{save_id}/user/common/", "{save_id}/user/common/", SIGIL_SAVE_AREA_DEVICE, false,
       NULL },
-    { "mlc01/usr/save/00050000/{save_id}/user/{profile}/", "{save_id}/user/account/", SIGIL_SAVE_AREA_ACCOUNT, false,
+    { "mlc01/usr/save/{category}/{save_id}/user/{profile}/", "{save_id}/user/account/", SIGIL_SAVE_AREA_ACCOUNT, false,
       "{save_id}/user/{profile}/" },
 };
 static const sigil_layout_profiles CEMU_PROFILES = {
     "mlc01", SIGIL_PROFILES_CEMU, "mlc01/usr/save/system/act/{profile}/account.dat",
-    CEMU_AREAS, COUNT(CEMU_AREAS), NULL, 0,
+    CEMU_AREAS, COUNT(CEMU_AREAS), NULL, 0, false, false, NULL, NULL, 0, "00050000",
 };
-static const char *const CEMU_SUBDIRS[] = { "mlc01/usr/save/00050000", "mlc01/usr/save/system/act" };
+static const char *const CEMU_SUBDIRS[] = { "mlc01/usr/save/00050000", "mlc01/usr/save/00050002",
+                                            "mlc01/usr/save/system/act" };
 
 /* Vita3K (vita3k/io/src/io.cpp): ux0/user/<user id>/savedata/<SAVEDIR>/. */
 static const sigil_layout_area VITA3K_AREAS[] = {

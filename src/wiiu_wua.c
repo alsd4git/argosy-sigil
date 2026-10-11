@@ -11,18 +11,23 @@
 #define WUA_FILE_ENTRY    SIGIL_ZAR_TREE_ENTRY
 #define WUA_MAX_METADATA  SIGIL_ZAR_MAX_METADATA
 
-/* Match `00050000<8 hex>` at start of `name`; emit canonical (last 8) +
- * raw (full 16) uppercase, plus the lowercase on-disk form of the canonical.
+/* The title categories that keep saves, in the order a .wua holding several
+ * titles picks them: a game (00050000), then a demo (00050002). Updates
+ * (0005000E) and DLC (0005000C) save under their game. */
+static const char *const SAVE_CATEGORIES[] = { "00050000", "00050002" };
+
+/* Match `<category><8 hex>` at start of `name`; emit canonical (last 8) +
+ * raw (full 16) uppercase, plus save_id as `<category>/<low>`.
  *
  * Cemu builds the save directory with fmt "{:08x}"
  * (src/Cafe/TitleList/SaveInfo.cpp:16), so mlc01/usr/save/00050000/1010ec00 is
  * the path it creates. On case-sensitive storage an uppercase leaf becomes a
  * second directory beside it and the saves split, so only save_id is cased to
  * match; title_id and raw_serial stay uppercase. */
-static bool match_wiiu_title_dir(const char *name, char canonical[9], char raw[17],
-                                 char save[9]) {
+static bool match_wiiu_title_dir(const char *name, const char *category, char canonical[9], char raw[17],
+                                 char save[18]) {
     if (strlen(name) < 16) return false;
-    if (memcmp(name, "00050000", 8) != 0) return false;
+    if (memcmp(name, category, 8) != 0) return false;
     for (int i = 0; i < 8; i++) {
         if (!sigil_is_hex(name[8 + i])) return false;
     }
@@ -30,7 +35,9 @@ static bool match_wiiu_title_dir(const char *name, char canonical[9], char raw[1
     canonical[8] = '\0';
     for (int i = 0; i < 16; i++) raw[i] = sigil_to_upper(name[i]);
     raw[16] = '\0';
-    sigil_lower_copy(canonical, save, 9);
+    char joined[18];
+    snprintf(joined, sizeof(joined), "%s/%s", category, canonical);
+    sigil_lower_copy(joined, save, 18);
     return true;
 }
 
@@ -42,7 +49,7 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
 
     sigil_result_init(out);
     out->platform = SIGIL_PLATFORM_WIIU;
-    out->usage = SIGIL_USAGE_FOLDER_EXACT;
+    out->usage = SIGIL_USAGE_FOLDER_SPLIT;
 
     sigil_zar_footer ft;
     int rc = sigil_zar_read_footer(io, &ft);
@@ -81,28 +88,30 @@ int sigil_extract_wiiu(const sigil_io *io, const char *filename_hint,
     uint32_t total_nodes = (uint32_t)(ft.file_tree_size / WUA_FILE_ENTRY);
 
     rc = SIGIL_ERR_NOT_FOUND;
-    for (uint32_t i = 0; i < root_count; i++) {
-        uint32_t idx = root_start + i;
-        if (idx >= total_nodes) break;
+    for (size_t c = 0; c < sizeof(SAVE_CATEGORIES) / sizeof(SAVE_CATEGORIES[0]) && rc != SIGIL_OK; c++) {
+        for (uint32_t i = 0; i < root_count; i++) {
+            uint32_t idx = root_start + i;
+            if (idx >= total_nodes) break;
 
-        const uint8_t *e = tree + (size_t)idx * WUA_FILE_ENTRY;
-        uint32_t nf = sigil_read_be32(e);
-        bool is_dir = (nf & 0x80000000u) == 0;
-        if (!is_dir) continue;
+            const uint8_t *e = tree + (size_t)idx * WUA_FILE_ENTRY;
+            uint32_t nf = sigil_read_be32(e);
+            bool is_dir = (nf & 0x80000000u) == 0;
+            if (!is_dir) continue;
 
-        uint32_t name_off = nf & 0x7FFFFFFFu;
-        char name[256];
-        if (sigil_zar_read_name(names, (size_t)ft.names_size, name_off,
-                                name, sizeof(name)) == 0) continue;
+            uint32_t name_off = nf & 0x7FFFFFFFu;
+            char name[256];
+            if (sigil_zar_read_name(names, (size_t)ft.names_size, name_off,
+                                    name, sizeof(name)) == 0) continue;
 
-        char canonical[9], raw[17], save[9];
-        if (match_wiiu_title_dir(name, canonical, raw, save)) {
-            memcpy(out->title_id,   canonical, 9);
-            memcpy(out->raw_serial, raw,       17);
-            memcpy(out->save_id,    save,      9);
-            out->source = SIGIL_SOURCE_BINARY;
-            rc = SIGIL_OK;
-            break;
+            char canonical[9], raw[17], save[18];
+            if (match_wiiu_title_dir(name, SAVE_CATEGORIES[c], canonical, raw, save)) {
+                memcpy(out->title_id,   canonical, 9);
+                memcpy(out->raw_serial, raw,       17);
+                memcpy(out->save_id,    save,      18);
+                out->source = SIGIL_SOURCE_BINARY;
+                rc = SIGIL_OK;
+                break;
+            }
         }
     }
 

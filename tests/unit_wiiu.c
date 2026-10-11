@@ -23,7 +23,7 @@ static const char TITLE_DIR_UPPER[] = "000500001010EC00";
 static const char TITLE_DIR_LOWER[] = "000500001010ec00";
 static const char EXPECT_TITLE[]    = "1010EC00";
 static const char EXPECT_RAW[]      = "000500001010EC00";
-static const char EXPECT_SAVE[]     = "1010ec00";
+static const char EXPECT_SAVE[]     = "00050000/1010ec00";
 
 static int failures = 0;
 
@@ -51,20 +51,29 @@ static void put_be64(uint8_t *p, uint64_t v) {
     put_be32(p + 4, (uint32_t)(v & 0xFFFFFFFFu));
 }
 
-static void build_wua(uint8_t *buf, const char *title_dir) {
-    size_t name_len = strlen(title_dir);
+/* The root holds `title_dir`, and `first` before it when given: a .wua can
+ * bundle a game with its update and DLC. */
+static void build_wua2(uint8_t *buf, const char *first, const char *title_dir) {
     memset(buf, 0, IMAGE_SIZE);
-
+    const char *dirs[2] = { first ? first : title_dir, title_dir };
+    /* The root's empty name at 0, then each directory's: a length byte and
+     * its characters. */
+    size_t count = first ? 2 : 1, names_size = 1;
+    uint32_t name_at[2];
     buf[NAMES_OFFSET] = 0;
-    buf[NAMES_OFFSET + 1] = (uint8_t)name_len;
-    memcpy(buf + NAMES_OFFSET + 2, title_dir, name_len);
-    size_t names_size = 2 + name_len;
+    for (size_t i = 0; i < count; i++) {
+        size_t name_len = strlen(dirs[i]);
+        name_at[i] = (uint32_t)names_size;
+        buf[NAMES_OFFSET + names_size] = (uint8_t)name_len;
+        memcpy(buf + NAMES_OFFSET + names_size + 1, dirs[i], name_len);
+        names_size += 1 + name_len;
+    }
 
     put_be32(buf + TREE_OFFSET, 0);
     put_be32(buf + TREE_OFFSET + 4, 1);
-    put_be32(buf + TREE_OFFSET + 8, 1);
-    put_be32(buf + TREE_OFFSET + WUA_FILE_ENTRY, 1);
-    size_t tree_size = 2 * WUA_FILE_ENTRY;
+    put_be32(buf + TREE_OFFSET + 8, (uint32_t)count);
+    for (size_t i = 0; i < count; i++) put_be32(buf + TREE_OFFSET + (i + 1) * WUA_FILE_ENTRY, name_at[i]);
+    size_t tree_size = (count + 1) * WUA_FILE_ENTRY;
 
     uint8_t *footer = buf + IMAGE_SIZE - WUA_FOOTER_SIZE;
     put_be64(footer + 0x20, NAMES_OFFSET);
@@ -73,6 +82,23 @@ static void build_wua(uint8_t *buf, const char *title_dir) {
     put_be64(footer + 0x38, tree_size);
     put_be32(footer + 0x88, WUA_VERSION_1);
     put_be32(footer + 0x8C, WUA_MAGIC);
+}
+
+static void build_wua(uint8_t *buf, const char *title_dir) { build_wua2(buf, NULL, title_dir); }
+
+static void expect_save(const char *label, const uint8_t *buf, size_t len, const char *filename,
+                        const char *want_save, sigil_usage want_usage) {
+    mem_ctx ctx = { buf, len };
+    sigil_io io = { mem_read, mem_size, NULL, &ctx };
+    sigil_result r;
+    int rc = sigil_extract_from_io(&io, filename, SIGIL_PLATFORM_WIIU, NULL, &r);
+    if (rc != SIGIL_OK || strcmp(r.save_id, want_save) != 0 || r.usage != want_usage) {
+        fprintf(stderr, "FAIL %s: rc=%d save_id='%s' usage=%d (want '%s')\n", label, rc,
+                rc == SIGIL_OK ? r.save_id : "", rc == SIGIL_OK ? (int)r.usage : -1, want_save);
+        failures++;
+        return;
+    }
+    printf("ok  %s\n", label);
 }
 
 static void expect_ids(const char *label, const uint8_t *buf, size_t len,
@@ -98,7 +124,7 @@ static void expect_ids(const char *label, const uint8_t *buf, size_t len,
         failures++;
         return;
     }
-    if (r.usage != SIGIL_USAGE_FOLDER_EXACT || r.source != want_source) {
+    if (r.usage != SIGIL_USAGE_FOLDER_SPLIT || r.source != want_source) {
         fprintf(stderr, "FAIL %s: usage=%d source=%d\n", label, (int)r.usage, (int)r.source);
         failures++;
         return;
@@ -110,8 +136,9 @@ int main(void) {
     uint8_t buf[IMAGE_SIZE];
 
     /* Mario Kart 8 (EUR): Cemu creates mlc01/usr/save/00050000/1010ec00, so
-     * save_id is lowercase while title_id and raw_serial keep the uppercase
-     * form the archive and the community filenames use. */
+     * save_id is that category and code in lowercase while title_id and
+     * raw_serial keep the uppercase form the archive and the community
+     * filenames use. */
     build_wua(buf, TITLE_DIR_UPPER);
     expect_ids("wua title dir", buf, sizeof(buf), "game.wua", SIGIL_SOURCE_BINARY);
     {
@@ -133,6 +160,18 @@ int main(void) {
     expect_ids("wua title dir already lowercase", buf, sizeof(buf), "game.wua",
                SIGIL_SOURCE_BINARY);
 
+    /* A demo saves under its own category, usr/save/00050002/. */
+    build_wua(buf, "000500021010EC00");
+    expect_save("wua demo", buf, sizeof(buf), "game.wua", "00050002/1010ec00", SIGIL_USAGE_FOLDER_SPLIT);
+
+    /* A bundled update listed first doesn't name the save: the game does. */
+    build_wua2(buf, "0005000E1010EC00", TITLE_DIR_UPPER);
+    expect_save("wua update before game", buf, sizeof(buf), "game.wua", EXPECT_SAVE, SIGIL_USAGE_FOLDER_SPLIT);
+
+    /* A game listed after a demo of another title still wins. */
+    build_wua2(buf, "000500021AAAAA00", TITLE_DIR_UPPER);
+    expect_save("wua game after demo", buf, sizeof(buf), "game.wua", EXPECT_SAVE, SIGIL_USAGE_FOLDER_SPLIT);
+
 #ifdef SIGIL_TEST_FILENAME_FALLBACK
     /* The filename fallback reaches the same field and must agree with the
      * binary path; a bracketed id is the only source for a container sigil
@@ -140,6 +179,16 @@ int main(void) {
     memset(buf, 0, sizeof(buf));
     expect_ids("filename fallback", buf, sizeof(buf),
                "Mario Kart 8 [000500001010EC00].wua", SIGIL_SOURCE_FILENAME);
+    /* An update's or DLC's id names its game's save; a demo's its own; a bare
+     * code carries no category. */
+    expect_save("filename update id", buf, sizeof(buf), "Mario Kart 8 [0005000E1010EC00].wua", EXPECT_SAVE,
+                SIGIL_USAGE_FOLDER_SPLIT);
+    expect_save("filename dlc id", buf, sizeof(buf), "Mario Kart 8 [0005000C1010EC00].wua", EXPECT_SAVE,
+                SIGIL_USAGE_FOLDER_SPLIT);
+    expect_save("filename demo id", buf, sizeof(buf), "Mario Kart 8 [000500021010EC00].wua", "00050002/1010ec00",
+                SIGIL_USAGE_FOLDER_SPLIT);
+    expect_save("filename bare code", buf, sizeof(buf), "Mario Kart 8 [1010EC00].wua", "1010ec00",
+                SIGIL_USAGE_FOLDER_EXACT);
 #endif
 
     if (failures) {

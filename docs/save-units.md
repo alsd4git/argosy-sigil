@@ -180,7 +180,7 @@ area it belongs to:
 | Layout | Account | Device | Profile list |
 |---|---|---|---|
 | yuzu forks | `nand/user/save/0000000000000000/{profile}/{save_id}/` | the same under the all-zero user | `nand/system/save/8000000000000010/su/avators/profiles.dat`; the folder is the profile's UUID with its bytes reversed |
-| `cemu` | `mlc01/usr/save/00050000/{save_id}/user/{profile}/` | `user/common/` and `meta/` beside it | `mlc01/usr/save/system/act/{profile}/account.dat` (`PersistentId`, `MiiName`) |
+| `cemu` | `mlc01/usr/save/{category}/{save_id}/user/{profile}/` | `user/common/` and `meta/` beside it | `mlc01/usr/save/system/act/{profile}/account.dat` (`PersistentId`, `MiiName`) |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | `ux0/user/{profile}/user.xml` |
 | `rpcs3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | `dev_hdd0/home/{profile}/localusername` |
 | `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/` | the same | `system/Profiles.json`; `bis/system/save/8000000000000000/0/imkvdb.arc` says whose each folder is |
@@ -207,7 +207,8 @@ stand for it. Results carry `profiles` and the `profile` chosen.
 A unit never carries a profile id, so it restores under any profile. A
 yuzu-fork unit holds `<save_id>/...` for the account save and
 `device/<save_id>/...` for the device save. A Cemu unit holds
-`<save_id>/meta/`, `<save_id>/user/account/` and `<save_id>/user/common/`; an
+`<low>/meta/`, `<low>/user/account/` and `<low>/user/common/`, the title
+id's low half without the category; an
 older unit naming the account folder by its id restores as the account
 save. A PSP unit holds each of the game's folders by its own name
 (`ULUS10064DATA00/...`, `ULUS10064SETTINGS/...`). The size file each yuzu fork keeps in a save folder

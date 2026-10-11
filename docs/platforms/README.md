@@ -205,7 +205,7 @@ value, and the default is the first listed.
 | `eden`, `citron`, `sudachi`, `yuzu`, `lemon` | `nand/user/save/0000000000000000/{profile}/{save_id}/`; device saves under the all-zero user | | with `profile` (a device save needs none) |
 | `skyline`, `strato` | `switch/nand/user/save/0000000000000000/<fixed user>/{save_id}/`; device saves under the all-zero user | | yes |
 | `ryujinx`, `kenjinx` | `bis/user/save/<index id>/0/`, and new entries in `bis/system/save/8000000000000000/0/imkvdb.arc` and `lastPublishedId` for a game never run | | send the emulator's save index and `system/Profiles.json`; restore returns them updated |
-| `cemu` | `mlc01/usr/save/00050000/{save_id}/meta/`, `user/common/`, `user/{profile}/` | | with `profile` (a unit without an account save needs none) |
+| `cemu` | `mlc01/usr/save/{category}/{save_id}/meta/`, `user/common/`, `user/{profile}/`; `{category}` from `save_id` (`00050000/<low>` for a game, `00050002/<low>` for a demo) | | with `profile` (a unit without an account save needs none) |
 | `azahar`, `citra`, `lime3ds` | `sdmc/Nintendo 3DS/<32 zeros>/<32 zeros>/title/{save_id}/data/`, and the title's `extdata/00000000/{extdata_id}/` | | yes |
 | `vita3k` | `ux0/user/{profile}/savedata/{save_id}/` | | with `profile` |
 | `rpcs3`, `aps3e`, `armsx3` | `dev_hdd0/home/{profile}/savedata/{save_id}*/` | | with `profile` |
