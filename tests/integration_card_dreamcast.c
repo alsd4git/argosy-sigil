@@ -76,34 +76,44 @@ typedef struct {
     uint32_t    total_blocks;
     uint32_t    free_blocks;
     uint32_t    free_slots;
+    const char *corrupt;        /* the one entry the card holds damaged, or NULL */
 } card_fact;
 
 /* total_blocks is the u16 at root offset 0x50. free_blocks counts 0xFFFC
  * FAT words below it; free_slots counts type-0x00 entries among the 208 slots
  * of blocks 241-253. All read from hex dumps. chao-adv2 also holds a 61-block
- * chain, 239 down to 179, that no directory entry names. */
+ * chain, 239 down to 179, that no directory entry names. mvc2-unwritten-fat
+ * is a real card whose emulator was killed after the game saved: the
+ * directory names MVLVSCP2_SYS from block 199 for 5 blocks, but every FAT word
+ * still reads free, so the entry is damaged and the blocks count free. */
 static const card_fact CARD_FACTS[] = {
-    { "gundam-0079-flycast",     200, 194, 207 },
-    { "vmu-a1-nine-games",       200, 156, 199 },
-    { "jsr-forward-dir-vmu",     240, 130, 203 },
-    { "extended-blocks-vmu",     241, 233, 207 },
-    { "chao-adv2-game-vmu",      240,  51, 207 },
-    { "pacit-game-and-data-vmu", 200, 183, 206 },
-    { "vmoooo-vmu",              200,  72, 207 },
-    { "empty-vmu",               200, 200, 208 },
+    { "gundam-0079-flycast",     200, 194, 207, NULL },
+    { "vmu-a1-nine-games",       200, 156, 199, NULL },
+    { "jsr-forward-dir-vmu",     240, 130, 203, NULL },
+    { "extended-blocks-vmu",     241, 233, 207, NULL },
+    { "chao-adv2-game-vmu",      240,  51, 207, NULL },
+    { "pacit-game-and-data-vmu", 200, 183, 206, NULL },
+    { "vmoooo-vmu",              200,  72, 207, NULL },
+    { "empty-vmu",               200, 200, 208, NULL },
+    { "mvc2-unwritten-fat-vmu",  200, 200, 207, "MVLVSCP2_SYS" },
 };
 
 static void check_facts(const char *id, const sigil_card_listing *listing) {
-    bool known = false;
+    const card_fact *fact = NULL;
     for (size_t i = 0; i < sizeof(CARD_FACTS) / sizeof(CARD_FACTS[0]); i++) {
-        if (strcmp(CARD_FACTS[i].id, id) != 0) continue;
-        known = true;
-        if (listing->total_blocks != CARD_FACTS[i].total_blocks) fail(id, "total block count differs");
-        if (listing->free_blocks != CARD_FACTS[i].free_blocks) fail(id, "free block count differs");
-        if (listing->free_slots != CARD_FACTS[i].free_slots) fail(id, "free slot count differs");
+        if (strcmp(CARD_FACTS[i].id, id) == 0) fact = &CARD_FACTS[i];
     }
-    if (!known) fail(id, "no recorded card facts");
-    if (listing->corrupt_count != 0) fail(id, "corrupt count differs");
+    if (!fact) {
+        fail(id, "no recorded card facts");
+        return;
+    }
+    if (listing->total_blocks != fact->total_blocks) fail(id, "total block count differs");
+    if (listing->free_blocks != fact->free_blocks) fail(id, "free block count differs");
+    if (listing->free_slots != fact->free_slots) fail(id, "free slot count differs");
+    if (listing->corrupt_count != (fact->corrupt ? 1u : 0u)) fail(id, "corrupt count differs");
+    if (fact->corrupt && (listing->corrupt_entry_count != 1 || strcmp(listing->corrupt_entries[0].name, fact->corrupt) != 0)) {
+        fail(id, "the damaged entry isn't named among the corrupt entries");
+    }
     if (listing->format != SIGIL_CARD_FORMAT_DREAMCAST_VMU) fail(id, "format differs");
 }
 
@@ -635,6 +645,96 @@ static void check_wrong_size(const corpus_table *manifest) {
     free(bytes);
 }
 
+/* The repair report for `image`, or NULL when the repair call fails. */
+static sigil_card_repair_report *repair_of(const uint8_t *image) {
+    mem_ctx m = { image, VMU_CARD_SIZE };
+    sigil_io io = { mem_read, mem_size, NULL, &m };
+    sigil_card_repair_report *r = NULL;
+    return sigil_card_repair(&io, &r) == SIGIL_OK ? r : NULL;
+}
+
+static void expect_damage(const char *where, const uint8_t *image, const char *name, int damage) {
+    sigil_card_repair_report *r = repair_of(image);
+    if (!r || r->entry_count != 1 || r->entries[0].damage != damage || r->entries[0].repaired ||
+        strcmp(r->entries[0].name, name) != 0 || r->data) {
+        fail(where, "not reported unrecoverable with the expected damage");
+    }
+    sigil_card_repair_report_free(r);
+}
+
+/* mvc2-unwritten-fat-vmu's save is in blocks 199 down to 195 with no chain:
+ * repair rebuilds it there, the save's VMS header CRC confirms it, and the
+ * card lists the save whole with nothing else changed. Each condition the
+ * rebuild rests on, broken, leaves the save unrecoverable. */
+static void check_repair(const corpus_table *manifest) {
+    uint8_t *image = (uint8_t *)malloc(VMU_CARD_SIZE);
+    if (!image || !load_sample(manifest, "mvc2-unwritten-fat-vmu", image)) { free(image); return; }
+    const char *id = "mvc2-unwritten-fat-vmu";
+    sigil_card_repair_report *r = repair_of(image);
+    sigil_card_listing *l = NULL;
+    if (!r || r->entry_count != 1 || strcmp(r->entries[0].name, "MVLVSCP2_SYS") != 0 ||
+        r->entries[0].damage != SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN || !r->entries[0].repaired || r->entries[0].first_block != 199 ||
+        r->format != SIGIL_CARD_FORMAT_DREAMCAST_VMU || !r->data || r->len != VMU_CARD_SIZE) {
+        fail(id, "the unwritten chain wasn't reported repaired");
+    } else if (sigil_dreamcast_card_list(r->data, &l) != SIGIL_OK || l->entry_count != 1 || l->corrupt_count != 0 ||
+               l->entries[0].blocks != 5 || l->entries[0].first_block != 199 || l->free_blocks != 195) {
+        fail(id, "the repaired card doesn't list the save whole");
+    } else {
+        static const uint16_t CHAIN[] = { 198, 197, 196, 195, 0xFFFA };
+        bool only_chain = true;
+        for (size_t off = 0; off < VMU_CARD_SIZE; off++) {
+            bool in_chain = off >= FAT_OFFSET + 2 * 195 && off < FAT_OFFSET + 2 * 200;
+            if (!in_chain && r->data[off] != image[off]) only_chain = false;
+        }
+        for (uint32_t i = 0; i < 5; i++) {
+            if (sigil_read_le16(r->data + FAT_OFFSET + 2 * (199 - i)) != CHAIN[i]) only_chain = false;
+        }
+        if (!only_chain) fail(id, "repair wrote more than the chain 199, 198, 197, 196, 195");
+    }
+    sigil_card_listing_free(l);
+    sigil_card_repair_report_free(r);
+
+    uint8_t *edited = (uint8_t *)malloc(VMU_CARD_SIZE);
+    static const struct { size_t off; uint8_t bytes[2]; int damage; const char *what; } BREAKS[] = {
+        { 199u * VMU_BLOCK_SIZE + 0x46, { 0, 0 }, SIGIL_CARD_DAMAGE_UNVERIFIABLE, "a save with no CRC" },
+        { 197u * VMU_BLOCK_SIZE + 0x10, { 0xA5, 0x5A }, SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH, "a block that fails the CRC" },
+        { FAT_OFFSET + 2 * 196, { 0xFA, 0xFF }, SIGIL_CARD_DAMAGE_BLOCKS_IN_USE, "a block the FAT marks used" },
+        { 0x1FA00, { 0xCC, 0x00 }, SIGIL_CARD_DAMAGE_UNVERIFIABLE, "a game file" },
+        { 0x1FA00 + 0x1A, { 1, 0 }, SIGIL_CARD_DAMAGE_UNVERIFIABLE, "a header past the first block" },
+        { 0x1FA00 + 0x18, { 201, 0 }, SIGIL_CARD_DAMAGE_BLOCKS_IN_USE, "a size past the bottom of the card" },
+        { FAT_OFFSET + 2 * 199, { 199, 0 }, SIGIL_CARD_DAMAGE_CHAIN_BROKEN, "a chain looping on its first block" },
+    };
+    for (size_t i = 0; edited && i < sizeof(BREAKS) / sizeof(BREAKS[0]); i++) {
+        memcpy(edited, image, VMU_CARD_SIZE);
+        memcpy(edited + BREAKS[i].off, BREAKS[i].bytes, 2);
+        char where[96];
+        snprintf(where, sizeof(where), "%s, %s", id, BREAKS[i].what);
+        expect_damage(where, edited, "MVLVSCP2_SYS", BREAKS[i].damage);
+    }
+    free(edited);
+    free(image);
+
+    /* A whole card has nothing to report; gundam-0079-flycast's 6-block save
+     * reported against 5 blocks is a size mismatch, its blocks also named by a
+     * second entry are shared, and neither is repaired. */
+    uint8_t *gundam = (uint8_t *)malloc(VMU_CARD_SIZE);
+    if (!gundam || !load_sample(manifest, "gundam-0079-flycast", gundam)) { free(gundam); return; }
+    r = repair_of(gundam);
+    if (!r || r->entry_count != 0 || r->data) fail("gundam-0079-flycast", "a whole card reported damage");
+    sigil_card_repair_report_free(r);
+    gundam[0x1FA00 + 0x18] = 5;
+    expect_damage("gundam-0079-flycast, size 5 for 6 blocks", gundam, "GUNDAM_US_01", SIGIL_CARD_DAMAGE_SIZE_MISMATCH);
+    gundam[0x1FA00 + 0x18] = 6;
+    memcpy(gundam + 0x1FA00 + VMU_DIR_ENTRY_SIZE, gundam + 0x1FA00, VMU_DIR_ENTRY_SIZE);
+    r = repair_of(gundam);
+    if (!r || r->entry_count != 2 || r->entries[0].damage != SIGIL_CARD_DAMAGE_BLOCKS_SHARED || r->entries[0].repaired ||
+        r->entries[1].damage != SIGIL_CARD_DAMAGE_BLOCKS_SHARED || r->data) {
+        fail("gundam-0079-flycast", "two entries sharing a chain weren't both reported shared");
+    }
+    sigil_card_repair_report_free(r);
+    free(gundam);
+}
+
 /* An empty VMU laid out as one with 241 user blocks has all 241 free, and
  * a save written to it reads back. */
 static void check_format_like(const corpus_table *manifest) {
@@ -705,6 +805,7 @@ int main(void) {
     check_broken_chain(&manifest);
     check_wrong_size(&manifest);
     check_layout_guards(&manifest);
+    check_repair(&manifest);
     int missing = g_cards ? corpus_count_missing(&manifest, "dc") : 0;
     corpus_free(&manifest);
     corpus_free(&entries);

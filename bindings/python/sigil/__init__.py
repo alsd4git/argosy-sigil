@@ -15,6 +15,8 @@ __all__ = [
     "PLATFORM_AUTO",
     "SigilCardEntry",
     "SigilCardListing",
+    "SigilCardRepair",
+    "SigilCardRepairEntry",
     "SigilConflictError",
     "SigilCryptoError",
     "SigilDamagedError",
@@ -51,6 +53,7 @@ __all__ = [
     "layout_subdirs",
     "layouts",
     "list_card",
+    "repair_card",
     "list_profiles",
     "list_save_root",
     "load_header_key_from_prod_keys",
@@ -245,6 +248,30 @@ _CARD_FORMAT_NAMES: dict[int, CardFormat] = {
     lib.SIGIL_CARD_FORMAT_SEGACD_BRAM: "segacd-bram",
 }
 
+CardDamage = Literal[
+    "chain",
+    "chain-unwritten",
+    "chain-broken",
+    "size-mismatch",
+    "blocks-shared",
+    "blocks-in-use",
+    "checksum-mismatch",
+    "unverifiable",
+    "copy-damaged",
+]
+
+_CARD_DAMAGE_NAMES: dict[int, CardDamage] = {
+    lib.SIGIL_CARD_DAMAGE_CHAIN: "chain",
+    lib.SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN: "chain-unwritten",
+    lib.SIGIL_CARD_DAMAGE_CHAIN_BROKEN: "chain-broken",
+    lib.SIGIL_CARD_DAMAGE_SIZE_MISMATCH: "size-mismatch",
+    lib.SIGIL_CARD_DAMAGE_BLOCKS_SHARED: "blocks-shared",
+    lib.SIGIL_CARD_DAMAGE_BLOCKS_IN_USE: "blocks-in-use",
+    lib.SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH: "checksum-mismatch",
+    lib.SIGIL_CARD_DAMAGE_UNVERIFIABLE: "unverifiable",
+    lib.SIGIL_CARD_DAMAGE_COPY_DAMAGED: "copy-damaged",
+}
+
 _SUBDIR_LIST_DEPTH = 12
 _SUBDIR_CAP = 16
 _BASE_SEARCH_DEPTH = 5
@@ -391,6 +418,28 @@ class SigilCardListing:
     corrupt_count: int
     entries: tuple[SigilCardEntry, ...]
     corrupt_entries: tuple[SigilCardEntry, ...]   # left-out saves the card still names; blocks is 0
+
+
+@dataclass(frozen=True)
+class SigilCardRepairEntry:
+    """One damaged item on a card. `name` is the save as corrupt_entries names it, "" for the card's
+    own structures. `repaired` says whether SigilCardRepair.data holds the fix."""
+
+    name: str
+    owner_id: str
+    first_block: int
+    damage: CardDamage
+    repaired: bool
+
+
+@dataclass(frozen=True)
+class SigilCardRepair:
+    """What repair_card found. `data` is the whole card with every repair applied, in the form it
+    was read, or None when nothing was repaired. `entries` lists everything damaged."""
+
+    format: CardFormat
+    data: bytes | None
+    entries: tuple[SigilCardRepairEntry, ...]
 
 
 @dataclass(frozen=True)
@@ -1091,6 +1140,40 @@ def list_card(path: str | os.PathLike[str]) -> SigilCardListing:
         )
     finally:
         lib.sigil_card_listing_free(listing)
+
+
+def repair_card(path: str | os.PathLike[str]) -> SigilCardRepair:
+    """Repairs what the memory card at `path` proves about itself and reports the rest as
+    unrecoverable, for a card collect refused with SigilDamagedError. Writes nothing: write `data`
+    back if you choose, keeping the original, then collect again."""
+    io = lib.sigil_io_open_file(os.fsencode(path))
+    if io == ffi.NULL:
+        _raise_error(lib.SIGIL_ERR_IO)
+    out = ffi.new("sigil_card_repair_report **")
+    try:
+        rc = lib.sigil_card_repair(io, out)
+    finally:
+        lib.sigil_io_close(io)
+    if rc != lib.SIGIL_OK:
+        _raise_error(rc)
+    report = out[0]
+    try:
+        return SigilCardRepair(
+            format=_CARD_FORMAT_NAMES.get(report.format, "unknown"),
+            data=bytes(ffi.buffer(report.data, report.len)) if report.data != ffi.NULL else None,
+            entries=tuple(
+                SigilCardRepairEntry(
+                    name=_save_name(e.name),
+                    owner_id=_text(e.owner_id),
+                    first_block=int(e.first_block),
+                    damage=_CARD_DAMAGE_NAMES.get(e.damage, "chain"),
+                    repaired=bool(e.repaired),
+                )
+                for e in (report.entries[i] for i in range(report.entry_count))
+            ),
+        )
+    finally:
+        lib.sigil_card_repair_report_free(report)
 
 
 def _text(chars) -> str:

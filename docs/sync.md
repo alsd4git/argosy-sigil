@@ -138,7 +138,20 @@ managed restore also refuses a shared volume holding any corrupt save,
 which the swap would drop; unmanaged keeps it in place. `repair` rebuilds
 the structures sigil can rebuild (a `.vmp` signature, a PCSX2 index or
 superblock) and changes none of the rest: sigil never writes over saves it
-can't read. An empty card file counts as no card, and so does one with
+can't read.
+
+A card refused for a corrupt save goes through a separate call,
+`sigil_card_repair` (`repair_card` in the bindings). It repairs only what
+the card's own records prove and reports everything damaged, each save
+marked repaired or unrecoverable. It writes nothing. The client keeps the
+original, writes the repaired card back if the user agrees, and collects
+again; a save left unrecoverable keeps the card refused.
+
+| Format | Repaired | Reported unrecoverable |
+|---|---|---|
+| Dreamcast VMU | a data save whose chain was never written (`chain-unwritten`), when its blocks sit free from its first block down, where the BIOS allocates them, and pass the save's VMS header CRC | a chain that loops or ends early, one whose length disagrees with the directory, blocks two saves share, blocks in use, a CRC mismatch, and a save with no CRC to check (a game file, or a CRC of 0) |
+| GameCube | a directory or block table copy that fails its checksum, from the copy that passes, as the console's `__CARDCheck` does (`copy-damaged`) | a save whose chain only the damaged copy held |
+| PS1, PS2, Saturn, Sega CD | | every corrupt save the listing names (`chain`) | An empty card file counts as no card, and so does one with
 every byte 0xFF, the erased card AetherSX2, NetherSX2 and ARMSX2 create for
 a slot never used: collect passes over it and restore may format it.
 

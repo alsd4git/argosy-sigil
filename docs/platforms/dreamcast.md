@@ -63,6 +63,15 @@ are in [Sync](../sync.md).
 `sigil_card_list` reads Dreamcast VMUs (`SIGIL_CARD_FORMAT_DREAMCAST_VMU`,
 `.bin` or `.vmu`, a 128 KiB VMU flash image).
 
+`sigil_card_repair` rebuilds a data save whose FAT chain was never
+written, as when the emulator is killed after the game saves: the
+directory entry still names the first block and the size, and the BIOS
+allocates a data save's blocks from the top of the user area down. Sigil
+rebuilds the chain only when those blocks are free and the save's VMS
+header CRC, computed over them in that order, matches the stored one.
+The `mvc2-unwritten-fat-vmu` sample is a real case from flycast on
+Android. See [sync](../sync.md#damaged-files) for the flow.
+
 On Dreamcast
 it is the game's VMU A1 (`vmu_A1.bin`) when it has saves there alone, else
 a zip of `vmu_A1.bin` to `vmu_D2.bin` as present. Every

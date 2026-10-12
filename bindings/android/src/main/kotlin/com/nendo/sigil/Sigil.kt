@@ -287,6 +287,47 @@ data class SigilCardListing(
 }
 
 /**
+ * One damaged item on a card. [name] is the save as [SigilCardListing.corruptEntries] names it,
+ * empty for the card's own structures. [repaired] says whether [SigilCardRepair.data] holds the fix.
+ */
+data class SigilCardRepairEntry(
+    val name: String,
+    val ownerId: String,
+    val firstBlock: Int,
+    private val damageCode: Int,
+    val repaired: Boolean
+) {
+    val damage: Damage get() = Damage.fromCode(damageCode)
+
+    enum class Damage(val code: Int) {
+        Chain(1),
+        ChainUnwritten(2),
+        ChainBroken(3),
+        SizeMismatch(4),
+        BlocksShared(5),
+        BlocksInUse(6),
+        ChecksumMismatch(7),
+        Unverifiable(8),
+        CopyDamaged(9);
+        companion object {
+            fun fromCode(c: Int): Damage = values().firstOrNull { it.code == c } ?: Chain
+        }
+    }
+}
+
+/**
+ * What [Sigil.repairCard] found. [data] is the whole card with every repair applied, in the form
+ * it was read, or null when nothing was repaired. [entries] lists everything damaged.
+ */
+class SigilCardRepair(
+    private val formatCode: Int,
+    val data: ByteArray?,
+    val entries: List<SigilCardRepairEntry>
+) {
+    val format: SigilCardListing.Format get() = SigilCardListing.Format.fromCode(formatCode)
+}
+
+/**
  * What [Sigil.collect] or [Sigil.restore] produced. Store [state] and pass it to the next call
  * for this game.
  *
@@ -445,6 +486,11 @@ object Sigil {
         fileAccess: SigilFileAccess
     ): Array<String>
 
+    @JvmStatic private external fun nativeRepairCard(
+        rootPath: String,
+        name: String,
+        fileAccess: SigilFileAccess
+    ): SigilCardRepair
     @JvmStatic private external fun nativeListCard(
         rootPath: String,
         name: String,
@@ -725,6 +771,17 @@ object Sigil {
         val slash = path.lastIndexOf('/')
         val root = if (slash > 0) path.substring(0, slash) else if (slash == 0) "/" else "."
         return nativeListCard(root, path.substring(slash + 1), fileAccess)
+    }
+
+    /**
+     * Repairs what the memory card at [path] proves about itself and reports the rest as
+     * unrecoverable, for a card collect refused with [SigilException.DAMAGED]. Writes nothing:
+     * write [SigilCardRepair.data] back if you choose, keeping the original, then collect again.
+     */
+    fun repairCard(path: String, fileAccess: SigilFileAccess = PosixFileAccess): SigilCardRepair {
+        val slash = path.lastIndexOf('/')
+        val root = if (slash > 0) path.substring(0, slash) else if (slash == 0) "/" else "."
+        return nativeRepairCard(root, path.substring(slash + 1), fileAccess)
     }
 
     /** Subfolders under the save root a layout writes into, so the caller knows what to list. */

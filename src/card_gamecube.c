@@ -575,6 +575,44 @@ int sigil_gamecube_bind_serial(uint8_t *image, size_t size, uint32_t first_block
     return SIGIL_OK;
 }
 
+/* Copies the passing copy of a two-block structure over the failing one; a
+ * structure whose copies both pass or both fail is left alone. */
+static int restore_copy(uint8_t *image, uint32_t first, bool valid0, bool valid1, sigil_card_repair_report *report,
+                        bool *changed) {
+    if (valid0 == valid1) return SIGIL_OK;
+    uint32_t good = valid0 ? first : first + 1, bad = valid0 ? first + 1 : first;
+    memcpy(block_mut(image, bad), block_at(image, good), GC_BLOCK_SIZE);
+    *changed = true;
+    return sigil_card_repair_note(report, NULL, NULL, bad, SIGIL_CARD_DAMAGE_COPY_DAMAGED, true);
+}
+
+int sigil_gamecube_card_repair(uint8_t *image, size_t size, sigil_card_repair_report *report, bool *changed) {
+    if (!image || !report || !changed) return SIGIL_ERR_INVALID_ARG;
+    *changed = false;
+    card_view v;
+    int rc = open_view(image, size, &v);
+    if (rc != SIGIL_OK) return rc;
+    const uint8_t *dir0 = block_at(image, DIR_BLOCK_FIRST), *dir1 = block_at(image, DIR_BLOCK_FIRST + 1);
+    const uint8_t *bat0 = block_at(image, BAT_BLOCK_FIRST), *bat1 = block_at(image, BAT_BLOCK_FIRST + 1);
+    size_t bat_len = GC_BLOCK_SIZE - BAT_COUNTER;
+    bool dir_valid0 = checksum_matches(dir0, DIR_CHECKSUM, dir0 + DIR_CHECKSUM);
+    bool dir_valid1 = checksum_matches(dir1, DIR_CHECKSUM, dir1 + DIR_CHECKSUM);
+    bool bat_valid0 = checksum_matches(bat0 + BAT_COUNTER, bat_len, bat0);
+    bool bat_valid1 = checksum_matches(bat1 + BAT_COUNTER, bat_len, bat1);
+    rc = restore_copy(image, DIR_BLOCK_FIRST, dir_valid0, dir_valid1, report, changed);
+    if (rc == SIGIL_OK) rc = restore_copy(image, BAT_BLOCK_FIRST, bat_valid0, bat_valid1, report, changed);
+    if (rc != SIGIL_OK) return rc;
+
+    sigil_card_listing *listing = NULL;
+    rc = sigil_gamecube_card_list(image, size, &listing);
+    for (size_t i = 0; rc == SIGIL_OK && i < listing->corrupt_entry_count; i++) {
+        const sigil_card_entry *e = &listing->corrupt_entries[i];
+        rc = sigil_card_repair_note(report, e->name, e->owner_id, e->first_block, SIGIL_CARD_DAMAGE_CHAIN, false);
+    }
+    sigil_card_listing_free(listing);
+    return rc;
+}
+
 int sigil_gamecube_card_list_io(const sigil_io *io, sigil_card_listing **out) {
     uint8_t *image = NULL;
     size_t size = 0;

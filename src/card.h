@@ -30,4 +30,11 @@ void sigil_card_listing_corrupt(sigil_card_listing *listing, const char *name, c
  */
 void sigil_card_sony_owner(const char *name, char out[SIGIL_CARD_OWNER_MAX]);
 
+/**
+ * Adds one damaged item to `report`; NULL `name` or `owner_id` leave them
+ * empty. SIGIL_ERR_OOM when the entry can't be stored.
+ */
+int sigil_card_repair_note(sigil_card_repair_report *report, const char *name, const char *owner_id,
+                           uint32_t first_block, int damage, bool repaired);
+
 #endif

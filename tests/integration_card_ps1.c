@@ -430,6 +430,18 @@ static void check_broken_chains(const corpus_table *manifest) {
             fail("broken chains", "the broken save isn't named among the corrupt entries");
         }
         sigil_card_listing_free(l);
+
+        /* PS1 records nothing to rebuild a chain from: repair reports the
+         * save unrecoverable, as the listing names it, and returns no card. */
+        sigil_io *io = mem_root_io(broken, PS1_CARD_SIZE);
+        sigil_card_repair_report *r = NULL;
+        if (sigil_card_repair(io, &r) != SIGIL_OK || r->entry_count < 1 || r->data || strcmp(r->entries[0].name, name) != 0 ||
+            r->entries[0].repaired || r->entries[0].damage != SIGIL_CARD_DAMAGE_CHAIN || r->entries[0].first_block != 1 ||
+            !r->entries[0].owner_id[0] || r->format != SIGIL_CARD_FORMAT_PS1_RAW) {
+            fail("broken chains", "repair didn't report the save unrecoverable");
+        }
+        sigil_card_repair_report_free(r);
+        sigil_io_close(io);
     }
 
     /* Another save's chain running into this one's middle: each claims a

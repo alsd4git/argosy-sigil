@@ -207,6 +207,51 @@ func TestListCardNamesACorruptSave(t *testing.T) {
 	}
 }
 
+func TestRepairCardReportsAPS1SaveUnrecoverable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "card.mcr")
+	if err := os.WriteFile(path, brokenCrossCard(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repair, err := RepairCard(path)
+	if err != nil || repair.Format != CardFormatPS1Raw || repair.Data != nil || len(repair.Entries) != 1 {
+		t.Fatalf("repair = %+v, %v", repair, err)
+	}
+	e := repair.Entries[0]
+	if e.Name != "BASLUSP01041CROSS" || e.OwnerID != "SLUS-01041" || e.FirstBlock != 1 || e.Damage != CardDamageChain || e.Repaired {
+		t.Fatalf("entry = %+v", e)
+	}
+}
+
+func TestRepairCardRebuildsAnUnwrittenVMUChainAndCollectThenReadsIt(t *testing.T) {
+	sample, err := os.ReadFile(filepath.Join("..", "..", "tests", "fixtures", "saves", "dc", "files", "mvc2-unwritten-fat-vmu", "T1212N.A1.bin"))
+	if err != nil {
+		t.Skip("Dreamcast sample missing")
+	}
+	root := t.TempDir()
+	card := filepath.Join(root, "T1212N.A1.bin")
+	if err := os.WriteFile(card, sample, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mvc2 := PersistedResult("dc", "T1212N", "T1212N", 0)
+	opts := &SyncOptions{Options: map[string]string{"reicast_per_content_vmus": "VMU A1"}}
+	if _, err := Collect(mvc2, "flycast", "Marvel vs. Capcom 2 (USA).gdi", root, opts); !errors.Is(err, ErrDamaged) {
+		t.Fatalf("collect before repair = %v", err)
+	}
+	repair, err := RepairCard(card)
+	if err != nil || len(repair.Entries) != 1 || len(repair.Data) != 131072 {
+		t.Fatalf("repair = %+v, %v", repair, err)
+	}
+	if e := repair.Entries[0]; e.Name != "MVLVSCP2_SYS" || e.FirstBlock != 199 || e.Damage != CardDamageChainUnwritten || !e.Repaired {
+		t.Fatalf("entry = %+v", e)
+	}
+	if err := os.WriteFile(card, repair.Data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if unit, err := Collect(mvc2, "flycast", "Marvel vs. Capcom 2 (USA).gdi", root, opts); err != nil || unit.Data == nil {
+		t.Fatalf("collect after repair = %+v, %v", unit, err)
+	}
+}
+
 func TestABrokenSaveOfTheGameIsDamagedNamingTheCard(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Chrono Cross.srm"), brokenCrossCard(), 0o644); err != nil {

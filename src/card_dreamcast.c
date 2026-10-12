@@ -255,6 +255,111 @@ int sigil_dreamcast_card_list_io(const sigil_io *io, sigil_card_listing **out) {
     return rc;
 }
 
+/* The VMS file header (mc.pp.se/dc/vms/fileheader.html) at the start of a
+ * data save: icon count, eyecatch type, CRC and data size. The CRC covers the
+ * header, icons, eyecatch and data with the CRC field read as zero. */
+#define VMS_HEADER_SIZE   0x80u
+#define VMS_ICON_COUNT    0x40u
+#define VMS_EYECATCH_TYPE 0x44u
+#define VMS_CRC           0x46u
+#define VMS_DATA_SIZE     0x48u
+#define VMS_ICON_SIZE     512u
+
+static const uint32_t EYECATCH_SIZE[4] = { 0, 72 * 56 * 2, 512 + 72 * 56, 32 + 72 * 56 / 2 };
+
+uint16_t sigil_dreamcast_vms_crc(const uint8_t *data, size_t len) {
+    uint16_t n = 0;
+    for (size_t i = 0; i < len; i++) {
+        n ^= (uint16_t)(data[i] << 8);
+        for (int bit = 0; bit < 8; bit++) n = (uint16_t)(n & 0x8000u ? (n << 1) ^ 0x1021u : n << 1);
+    }
+    return n;
+}
+
+/* Whether `blocks`, read in order, hold a data save whose VMS header CRC is
+ * set and matches. Sets `unverifiable` when the header records no CRC. */
+static bool vms_checks(const uint8_t *image, const uint32_t *blocks, uint32_t count, bool *unverifiable) {
+    *unverifiable = false;
+    size_t len = (size_t)count * VMU_BLOCK_SIZE;
+    uint8_t *file = (uint8_t *)malloc(len);
+    if (!file) return false;
+    for (uint32_t i = 0; i < count; i++) memcpy(file + (size_t)i * VMU_BLOCK_SIZE, block_at(image, blocks[i]), VMU_BLOCK_SIZE);
+    uint16_t eyecatch = sigil_read_le16(file + VMS_EYECATCH_TYPE);
+    uint16_t stored = sigil_read_le16(file + VMS_CRC);
+    uint64_t covered = (uint64_t)VMS_HEADER_SIZE + (uint64_t)sigil_read_le16(file + VMS_ICON_COUNT) * VMS_ICON_SIZE +
+                       (eyecatch < 4 ? EYECATCH_SIZE[eyecatch] : 0) + sigil_read_le32(file + VMS_DATA_SIZE);
+    bool ok = false;
+    if (stored == 0) {
+        *unverifiable = true;
+    } else if (eyecatch < 4 && covered <= len) {
+        file[VMS_CRC] = 0;
+        file[VMS_CRC + 1] = 0;
+        ok = sigil_dreamcast_vms_crc(file, (size_t)covered) == stored;
+    }
+    free(file);
+    return ok;
+}
+
+/* The damage on a save whose chain list_card leaves out, and for an unwritten
+ * chain whose blocks prove themselves, the rebuilt chain in `rebuilt`. A
+ * block another save's chain holds is never marked free, so a free block is
+ * unclaimed. */
+static int vmu_damage(const uint8_t *image, const vmu_layout *l, const uint8_t *entry, uint32_t rebuilt[VMU_BLOCKS],
+                      uint32_t *rebuilt_count) {
+    *rebuilt_count = 0;
+    uint32_t first = sigil_read_le16(entry + ENTRY_FIRST_BLOCK);
+    uint32_t size = sigil_read_le16(entry + ENTRY_SIZE);
+    uint32_t walked = walk_chain(image, l, first, NULL);
+    if (walked != 0 && walked == size) return SIGIL_CARD_DAMAGE_BLOCKS_SHARED;
+    if (walked != 0) return SIGIL_CARD_DAMAGE_SIZE_MISMATCH;
+    if (first >= l->user_blocks || fat_get(image, l, first) != VMU_FAT_FREE) return SIGIL_CARD_DAMAGE_CHAIN_BROKEN;
+
+    /* An unwritten chain: the BIOS gives a data save the highest free blocks,
+     * so its blocks run down from the first. Game files have no CRC here. */
+    if (entry[0] != VMU_TYPE_DATA || sigil_read_le16(entry + ENTRY_HEADER) != 0 || size == 0) {
+        return SIGIL_CARD_DAMAGE_UNVERIFIABLE;
+    }
+    if (size > first + 1) return SIGIL_CARD_DAMAGE_BLOCKS_IN_USE;
+    for (uint32_t i = 0; i < size; i++) {
+        uint32_t block = first - i;
+        if (fat_get(image, l, block) != VMU_FAT_FREE) return SIGIL_CARD_DAMAGE_BLOCKS_IN_USE;
+        rebuilt[i] = block;
+    }
+    bool unverifiable = false;
+    if (!vms_checks(image, rebuilt, size, &unverifiable)) {
+        return unverifiable ? SIGIL_CARD_DAMAGE_UNVERIFIABLE : SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH;
+    }
+    *rebuilt_count = size;
+    return SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN;
+}
+
+int sigil_dreamcast_card_repair(uint8_t image[VMU_CARD_SIZE], sigil_card_repair_report *report, bool *changed) {
+    if (!image || !report || !changed) return SIGIL_ERR_INVALID_ARG;
+    *changed = false;
+    vmu_layout l;
+    if (!read_layout(image, &l)) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    uint8_t claims[VMU_BLOCKS];
+    count_claims(image, &l, claims);
+
+    for (uint32_t s = 0; s < slot_count(&l); s++) {
+        const uint8_t *entry = image + slot_offset(&l, s);
+        if (!is_file(entry)) continue;
+        if (entry_chain(image, &l, entry, NULL) != 0 && !chain_shared(image, &l, entry, claims)) continue;
+        char name[VMU_NAME_LEN + 1];
+        memcpy(name, entry + ENTRY_NAME, VMU_NAME_LEN);
+        name[VMU_NAME_LEN] = '\0';
+        uint32_t rebuilt[VMU_BLOCKS], count = 0;
+        int damage = vmu_damage(image, &l, entry, rebuilt, &count);
+        for (uint32_t i = 0; i < count; i++) {
+            fat_set(image, &l, rebuilt[i], i + 1 < count ? rebuilt[i + 1] : VMU_FAT_END);
+        }
+        if (count) *changed = true;
+        int rc = sigil_card_repair_note(report, name, NULL, sigil_read_le16(entry + ENTRY_FIRST_BLOCK), damage, count != 0);
+        if (rc != SIGIL_OK) return rc;
+    }
+    return SIGIL_OK;
+}
+
 size_t sigil_dreamcast_dci_size(uint32_t blocks) {
     return VMU_DIR_ENTRY_SIZE + (size_t)blocks * VMU_BLOCK_SIZE;
 }

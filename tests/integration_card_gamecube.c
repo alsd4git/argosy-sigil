@@ -574,6 +574,84 @@ static void check_bat_choice(const char *what, const uint8_t *usa, size_t size,
     memcpy(image, usa, size);
 }
 
+typedef struct { const uint8_t *data; size_t len; } mem_ctx;
+
+static int mem_read(void *ctx, uint64_t off, void *buf, size_t len) {
+    mem_ctx *m = (mem_ctx *)ctx;
+    if (off >= m->len) return 0;
+    size_t n = m->len - (size_t)off < len ? m->len - (size_t)off : len;
+    memcpy(buf, m->data + off, n);
+    return (int)n;
+}
+
+static int64_t mem_size(void *ctx) { return (int64_t)((mem_ctx *)ctx)->len; }
+
+static int repair_card(const uint8_t *image, size_t size, sigil_card_repair_report **out) {
+    mem_ctx m = { image, size };
+    sigil_io io = { mem_read, mem_size, NULL, &m };
+    return sigil_card_repair(&io, out);
+}
+
+/* card-raw-usa with one directory or block table copy damaged: repair copies
+ * the whole copy over it, as __CARDCheck does, reports that block, and
+ * changes nothing else. Block table copy 2 is the current one and alone holds
+ * RogueLeader's chain, so with it damaged the card falls back to copy 1 and
+ * RogueLeader is reported unrecoverable. A whole card reports nothing; one
+ * with both copies damaged doesn't read. */
+static void check_repair(const corpus_table *manifest, const corpus_table *entries) {
+    uint8_t *usa = NULL;
+    size_t size = 0;
+    if (!load_card_sample(manifest, "card-raw-usa", &usa, &size)) return;
+    g_checks++;
+    sigil_card_repair_report *r = NULL;
+    if (repair_card(usa, size, &r) != SIGIL_OK || r->entry_count != 0 || r->data) fail("repair", "a whole card reported damage");
+    sigil_card_repair_report_free(r);
+
+    uint8_t *image = (uint8_t *)malloc(size);
+    static const struct { uint32_t damaged, good; const char *lost, *what; } COPIES[] = {
+        { 1, 2, NULL, "directory copy 1" },   { 2, 1, NULL, "directory copy 2" },
+        { 3, 4, NULL, "block table copy 1" }, { 4, 3, "RogueLeader", "block table copy 2" },
+    };
+    for (size_t i = 0; image && i < sizeof(COPIES) / sizeof(COPIES[0]); i++) {
+        memcpy(image, usa, size);
+        image[(size_t)COPIES[i].damaged * GC_BLOCK_SIZE + 0x100] ^= 0x01;
+        r = NULL;
+        sigil_card_listing *l = NULL;
+        bool rest_same = false;
+        if (repair_card(image, size, &r) == SIGIL_OK && r->data && r->len == size) {
+            rest_same = memcmp(r->data + (size_t)COPIES[i].damaged * GC_BLOCK_SIZE,
+                               usa + (size_t)COPIES[i].good * GC_BLOCK_SIZE, GC_BLOCK_SIZE) == 0;
+            for (uint32_t b = 0; rest_same && b < size / GC_BLOCK_SIZE; b++) {
+                if (b != COPIES[i].damaged) rest_same = memcmp(r->data + (size_t)b * GC_BLOCK_SIZE, usa + (size_t)b * GC_BLOCK_SIZE, GC_BLOCK_SIZE) == 0;
+            }
+        }
+        size_t want = COPIES[i].lost ? 2 : 1;
+        if (!r || r->entry_count != want || r->entries[0].damage != SIGIL_CARD_DAMAGE_COPY_DAMAGED || !r->entries[0].repaired ||
+            r->entries[0].first_block != COPIES[i].damaged || r->entries[0].name[0] || !rest_same) {
+            fail("repair", COPIES[i].what);
+        } else if (COPIES[i].lost && (strcmp(r->entries[1].name, COPIES[i].lost) != 0 || r->entries[1].repaired ||
+                                      r->entries[1].damage != SIGIL_CARD_DAMAGE_CHAIN)) {
+            fail("repair", "the save only the damaged copy held isn't reported unrecoverable");
+        } else if (sigil_gamecube_card_list(r->data, size, &l) != SIGIL_OK) {
+            fail("repair", "the repaired card doesn't list");
+        } else {
+            check_expected_entries("repair", "card-raw-usa", "memcard-image.raw", entries, l, r->data, size, COPIES[i].lost);
+        }
+        sigil_card_listing_free(l);
+        sigil_card_repair_report_free(r);
+    }
+    if (image) {
+        memcpy(image, usa, size);
+        image[GC_BLOCK_SIZE + 0x100] ^= 0x01;
+        image[2 * GC_BLOCK_SIZE + 0x100] ^= 0x01;
+        r = NULL;
+        if (repair_card(image, size, &r) != SIGIL_ERR_UNSUPPORTED_FORMAT || r) fail("repair", "a card with both directories damaged read");
+        sigil_card_repair_report_free(r);
+    }
+    free(image);
+    free(usa);
+}
+
 static void check_copy_choice(const corpus_table *manifest, const corpus_table *entries) {
     uint8_t *usa = NULL;
     size_t size = 0;
@@ -721,6 +799,7 @@ int main(void) {
     check_no_room_in_directory(&manifest);
     check_delete(&manifest, &entries);
     check_copy_choice(&manifest, &entries);
+    check_repair(&manifest, &entries);
     check_shared_chain(&manifest);
     check_bind_serial(&manifest, &entries);
     int missing = g_checks ? corpus_count_missing(&manifest, "ngc") : 0;

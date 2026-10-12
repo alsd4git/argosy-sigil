@@ -40,6 +40,8 @@ _JNI_CLASSES = {
     "SigilSaveUnit": "g_unit_class",
     "SigilCardEntry": "g_card_entry_class",
     "SigilCardListing": "g_card_listing_class",
+    "SigilCardRepairEntry": "g_repair_entry_class",
+    "SigilCardRepair": "g_repair_class",
     "SigilSyncResult": "g_sync_result_class",
     "SigilCompanionResult": "g_companion_result_class",
     "SigilSaveAlternate": "g_alternate_class",
@@ -65,6 +67,7 @@ _API_SURFACE = {
     "content stem": ("fun contentStem(", "def content_stem(", "func ContentStem("),
     "list save root": ("fun listSaveRoot(", "def list_save_root(", "func ListSaveRoot("),
     "list card": ("fun listCard(", "def list_card(", "func ListCard("),
+    "repair card": ("fun repairCard(", "def repair_card(", "func RepairCard("),
     "collect": ("fun collect(", "def collect(", "func Collect("),
     "restore": ("fun restore(", "def restore(", "func Restore("),
 }
@@ -350,6 +353,31 @@ def test_card_format_names_match_across_bindings():
     entries = [(_pascal_to_upper_snake(n), int(v)) for n, v in re.findall(r"(\w+)\((\d+)\)", kotlin.group(1))]
     assert entries == list(zip(formats, range(len(formats)))), (
         f"Kotlin Format {entries} disagrees with sigil_card_format {formats}"
+    )
+
+
+def test_card_damage_names_match_across_bindings():
+    """A damage added in C and missed in a binding reads back as the generic `chain`."""
+    block = re.search(r"typedef enum\s*\{([^}]*)\}\s*sigil_card_damage;", HEADER.read_text())
+    assert block, "sigil_card_damage enum not found in sigil.h"
+    damages = re.findall(r"SIGIL_CARD_DAMAGE_(\w+)", block.group(1))
+    assert damages and damages[0] == "CHAIN" and "= 1" in block.group(1).split(",")[0], "sigil_card_damage starts at CHAIN = 1"
+
+    py_map = dict(re.findall(r'lib\.SIGIL_CARD_DAMAGE_(\w+):\s*"([^"]+)"', PY_INIT.read_text()))
+    assert set(py_map) == set(damages), f"_CARD_DAMAGE_NAMES differs from sigil_card_damage: {py_map}"
+    for name, string in py_map.items():
+        assert string == _canonical_string(name), f"{name} maps to {string!r}"
+
+    go = GO.read_text()
+    assert set(re.findall(r"C\.SIGIL_CARD_DAMAGE_(\w+)", go)) == set(damages), "Go CardDamage constants differ"
+    go_strings = dict(re.findall(r'case CardDamage(\w+):\s*return "([^"]+)"', go))
+    assert set(go_strings.values()) | {"chain"} == {_canonical_string(d) for d in damages}, f"Go CardDamage strings {go_strings}"
+
+    kotlin = re.search(r"enum class Damage\(val code: Int\)\s*\{(.*?);", KOTLIN.read_text(), re.DOTALL)
+    assert kotlin, "Kotlin SigilCardRepairEntry.Damage enum not found"
+    entries = [(_pascal_to_upper_snake(n), int(v)) for n, v in re.findall(r"(\w+)\((\d+)\)", kotlin.group(1))]
+    assert entries == list(zip(damages, range(1, len(damages) + 1))), (
+        f"Kotlin Damage {entries} disagrees with sigil_card_damage {damages}"
     )
 
 

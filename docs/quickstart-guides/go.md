@@ -405,6 +405,37 @@ type CardEntry struct {
 }
 ```
 
+### Repairing a damaged card
+
+When Collect returns `ErrDamaged` for a card holding a corrupt save, pass
+the file the error names to `RepairCard`. It fixes what the card's own
+records prove and reports the rest; it writes nothing. If the user agrees,
+keep the original, write `Data` back, and collect again. What each format
+repairs is in [sync](../sync.md#damaged-files).
+
+```go
+sigil.RepairCard(
+    path string,        // required. The card file.
+) (*CardRepair, error)  // What ListCard returns for a file that isn't a card.
+
+type CardRepair struct {
+    Format  CardFormat         // As CardListing has it.
+    Data    []byte             // The whole card with every repair applied, in the form it was read;
+                               //   nil when nothing was repaired.
+    Entries []CardRepairEntry  // Everything damaged, repaired or not.
+}
+
+type CardRepairEntry struct {
+    Name       string     // The save, as CorruptEntries names it; "" for the card's own structures.
+    OwnerID    string
+    FirstBlock uint32
+    Damage     CardDamage // CardDamageChainUnwritten, CardDamageCopyDamaged (repairable), or
+                          //   CardDamageChain, ChainBroken, SizeMismatch, BlocksShared,
+                          //   BlocksInUse, ChecksumMismatch, Unverifiable.
+    Repaired   bool
+}
+```
+
 ## Helpers
 
 ```go

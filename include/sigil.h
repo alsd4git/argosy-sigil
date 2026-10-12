@@ -57,7 +57,9 @@ extern "C" {
                                                  a damaged structure sigil can rebuild (a .vmp signature, a PCSX2
                                                  index); a file that isn't a card sigil can read, or one holding a
                                                  corrupt save that may be the game's or a companion's, stays
-                                                 refused, since reading on would take that save as deleted */
+                                                 refused, since reading on would take that save as deleted.
+                                                 sigil_card_repair fixes such a card where its records prove
+                                                 the fix */
 #define SIGIL_ERR_REGION              -14  /* a save belongs to another region than the game, which can't read it */
 #define SIGIL_ERR_NO_TARGET           -15  /* the unit holds a volume or member with no file to go in: the
                                                  emulator's settings keep none, no profile is there for an
@@ -488,6 +490,56 @@ typedef struct {
 SIGIL_API int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
 SIGIL_API void sigil_card_listing_free(sigil_card_listing *listing);
 
+/* What is wrong with a damaged save or card structure. */
+typedef enum {
+    SIGIL_CARD_DAMAGE_CHAIN = 1,           /* the save's block chain doesn't hold together; the format gives
+                                              nothing to rebuild it from */
+    SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN,     /* the save's blocks are on the card but its chain was never
+                                              recorded: the emulator stopped between writing them and the FAT */
+    SIGIL_CARD_DAMAGE_CHAIN_BROKEN,        /* the chain loops, leaves the save area, or ends early */
+    SIGIL_CARD_DAMAGE_SIZE_MISMATCH,       /* the chain is whole but its length isn't the size the directory
+                                              records, so either could be wrong */
+    SIGIL_CARD_DAMAGE_BLOCKS_SHARED,       /* the save's blocks also belong to another save */
+    SIGIL_CARD_DAMAGE_BLOCKS_IN_USE,       /* the blocks a rebuilt chain would take are used or claimed */
+    SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH,   /* the blocks a rebuilt chain would take fail the save's checksum */
+    SIGIL_CARD_DAMAGE_UNVERIFIABLE,        /* the save carries no checksum to confirm a rebuilt chain */
+    SIGIL_CARD_DAMAGE_COPY_DAMAGED         /* one of the card's two copies of its directory or block table
+                                              fails its checksum; the other is whole */
+} sigil_card_damage;
+
+typedef struct {
+    char     name[SIGIL_CARD_NAME_MAX];      /* the damaged save, as corrupt_entries names it; empty for the
+                                                card's own structures or a save the format can't name */
+    char     owner_id[SIGIL_CARD_OWNER_MAX];
+    uint32_t first_block;
+    int      damage;                         /* sigil_card_damage */
+    int      repaired;                       /* 1 when `data` holds the fix, 0 when it can't be recovered */
+} sigil_card_repair_entry;
+
+#define SIGIL_CARD_REPAIR_V1 1u
+
+typedef struct {
+    uint32_t                 struct_version; /* SIGIL_CARD_REPAIR_V1 */
+    int                      format;         /* sigil_card_format */
+    uint8_t                 *data;           /* the whole card with every repair applied, in the form it was
+                                                read; NULL when nothing was repaired */
+    size_t                   len;
+    sigil_card_repair_entry *entries;        /* everything damaged on the card, repaired or not */
+    size_t                   entry_count;
+} sigil_card_repair_report;
+
+/* Repairs what a memory card's own records prove, and reports the rest as
+ * unrecoverable. It writes nothing: the client keeps the original and writes
+ * `data` back if it chooses, then collects again. A Dreamcast VMU save whose
+ * chain was never written is rebuilt when its blocks sit free where the BIOS
+ * allocates them and pass the save's header checksum; a GameCube card's
+ * damaged directory or block table copy is restored from the whole one, as
+ * the console does. Other damage, and other formats, are reported.
+ * SIGIL_OK whenever the card reads, with an empty report for a whole card;
+ * the errors sigil_card_list gives for one it can't read. */
+SIGIL_API int  sigil_card_repair(const sigil_io *io, sigil_card_repair_report **out);
+SIGIL_API void sigil_card_repair_report_free(sigil_card_repair_report *report);
+
 /* ---- Sync (docs/sync.md) ------------------------------------------------------
  * collect gathers one game's saves off the emulator's files into the unit that
  * travels to RomM; restore puts a unit back. sigil keeps what it must remember
@@ -614,7 +666,9 @@ SIGIL_API int  sigil_collect(const sigil_sync_request *req, sigil_sync_result **
  *                          card sigil can read at all; it holds a corrupt save that may be the
  *                          game's or a companion's; or, managed, it is a shared volume holding any
  *                          corrupt save, which a swap would drop. Only the first lifts with
- *                          repair. `problem` names the file.
+ *                          repair; for a corrupt save, pass the file to sigil_card_repair,
+ *                          write back what it repaired, and collect again. `problem` names
+ *                          the file.
  *   SIGIL_ERR_NO_TARGET    the unit holds a volume the emulator's settings keep no file for (a cart,
  *                          a VMU port), or on a layout with profiles a member no folder of the game
  *                          takes, an account save with no profile there, or one whose folder lies

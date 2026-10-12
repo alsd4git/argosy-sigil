@@ -1154,6 +1154,98 @@ func ListCard(path string) (*CardListing, error) {
 	}, nil
 }
 
+// CardDamage is what is wrong with a damaged save or card structure.
+type CardDamage int
+
+const (
+	CardDamageChain            CardDamage = C.SIGIL_CARD_DAMAGE_CHAIN
+	CardDamageChainUnwritten   CardDamage = C.SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN
+	CardDamageChainBroken      CardDamage = C.SIGIL_CARD_DAMAGE_CHAIN_BROKEN
+	CardDamageSizeMismatch     CardDamage = C.SIGIL_CARD_DAMAGE_SIZE_MISMATCH
+	CardDamageBlocksShared     CardDamage = C.SIGIL_CARD_DAMAGE_BLOCKS_SHARED
+	CardDamageBlocksInUse      CardDamage = C.SIGIL_CARD_DAMAGE_BLOCKS_IN_USE
+	CardDamageChecksumMismatch CardDamage = C.SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH
+	CardDamageUnverifiable     CardDamage = C.SIGIL_CARD_DAMAGE_UNVERIFIABLE
+	CardDamageCopyDamaged      CardDamage = C.SIGIL_CARD_DAMAGE_COPY_DAMAGED
+)
+
+func (d CardDamage) String() string {
+	switch d {
+	case CardDamageChainUnwritten:
+		return "chain-unwritten"
+	case CardDamageChainBroken:
+		return "chain-broken"
+	case CardDamageSizeMismatch:
+		return "size-mismatch"
+	case CardDamageBlocksShared:
+		return "blocks-shared"
+	case CardDamageBlocksInUse:
+		return "blocks-in-use"
+	case CardDamageChecksumMismatch:
+		return "checksum-mismatch"
+	case CardDamageUnverifiable:
+		return "unverifiable"
+	case CardDamageCopyDamaged:
+		return "copy-damaged"
+	default:
+		return "chain"
+	}
+}
+
+// CardRepairEntry is one damaged item on a card. Name is the save as
+// CorruptEntries names it, "" for the card's own structures. Repaired says
+// whether CardRepair.Data holds the fix.
+type CardRepairEntry struct {
+	Name       string
+	OwnerID    string
+	FirstBlock uint32
+	Damage     CardDamage
+	Repaired   bool
+}
+
+// CardRepair is what RepairCard found. Data is the whole card with every
+// repair applied, in the form it was read, or nil when nothing was repaired.
+type CardRepair struct {
+	Format  CardFormat
+	Data    []byte
+	Entries []CardRepairEntry
+}
+
+// RepairCard repairs what the memory card at path proves about itself and
+// reports the rest as unrecoverable, for a card Collect refused with
+// ErrDamaged. It writes nothing: write Data back if you choose, keeping the
+// original, then collect again.
+func RepairCard(path string) (*CardRepair, error) {
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	io := C.sigil_io_open_file(cpath)
+	if io == nil {
+		return nil, ErrIO
+	}
+	defer C.sigil_io_close(io)
+
+	var creport *C.sigil_card_repair_report
+	if err := errFromCode(C.sigil_card_repair(io, &creport)); err != nil {
+		return nil, err
+	}
+	defer C.sigil_card_repair_report_free(creport)
+
+	out := &CardRepair{Format: CardFormat(creport.format)}
+	if creport.data != nil {
+		out.Data = C.GoBytes(unsafe.Pointer(creport.data), C.int(creport.len))
+	}
+	for _, e := range unsafe.Slice(creport.entries, int(creport.entry_count)) {
+		out.Entries = append(out.Entries, CardRepairEntry{
+			Name:       C.GoString(&e.name[0]),
+			OwnerID:    C.GoString(&e.owner_id[0]),
+			FirstBlock: uint32(e.first_block),
+			Damage:     CardDamage(e.damage),
+			Repaired:   e.repaired != 0,
+		})
+	}
+	return out, nil
+}
+
 // SyncOptions are the optional inputs to Collect and Restore. Listing
 // (root-relative paths) replaces listing the save root; GameIDs are every id
 // the game's saves may carry (all discs of a set); State is what the last call

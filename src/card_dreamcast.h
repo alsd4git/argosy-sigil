@@ -37,6 +37,17 @@ int sigil_dreamcast_entry_data(const uint8_t image[VMU_CARD_SIZE], uint32_t firs
 /** Loads and lists a VMU image; SIGIL_ERR_UNSUPPORTED_FORMAT when it isn't one. */
 int sigil_dreamcast_card_list_io(const sigil_io *io, sigil_card_listing **out);
 
+/**
+ * Rebuilds, in `image`, the chain of each data save whose chain was never
+ * written, where its blocks are free and unclaimed downward from its first
+ * block and pass its VMS header checksum; reports every save left out as
+ * damaged, repaired or not. `changed` says whether `image` was written.
+ */
+int sigil_dreamcast_card_repair(uint8_t image[VMU_CARD_SIZE], sigil_card_repair_report *report, bool *changed);
+
+/** The CRC-16 a VMS header stores at 0x46: CCITT, polynomial 0x1021, initial 0. */
+uint16_t sigil_dreamcast_vms_crc(const uint8_t *data, size_t len);
+
 /** Bytes a file of `blocks` blocks takes in .dci form. */
 size_t sigil_dreamcast_dci_size(uint32_t blocks);
 

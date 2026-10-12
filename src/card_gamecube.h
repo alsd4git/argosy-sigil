@@ -15,6 +15,14 @@
 int sigil_gamecube_card_list_io(const sigil_io *io, sigil_card_listing **out);
 
 /**
+ * Restores, in `image`, a directory or block table copy that fails its
+ * checksum from the copy that passes, as the SDK's __CARDCheck does, and
+ * reports each one; reports the saves the listing leaves out as
+ * unrecoverable. `changed` says whether `image` was written.
+ */
+int sigil_gamecube_card_repair(uint8_t *image, size_t size, sigil_card_repair_report *report, bool *changed);
+
+/**
  * Reads a raw GameCube card (.raw, .gcp) into a malloc'd `*image` of `*size`
  * bytes, which the caller frees. The card must be one of the six sizes, carry
  * a valid header, and hold at least one valid directory and one valid block

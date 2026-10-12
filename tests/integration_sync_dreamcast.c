@@ -456,6 +456,27 @@ static void check_id_file_wins(void) {
     free(gundam);
 }
 
+/* A real per-game VMU whose FAT chain was never written (the emulator was
+ * killed after Marvel vs. Capcom 2 first saved): collect refuses it as
+ * damaged, naming the file, rather than uploading a card the game rejects. */
+static void check_unwritten_fat(void) {
+    size_t len = 0;
+    uint8_t *vmu = corpus_sample(&g_manifest, "dc", "mvc2-unwritten-fat-vmu", NULL, &len);
+    if (!vmu) return;
+    mem_root root = {0};
+    root_put(&root, "T1212N.A1.bin", vmu, len);
+    game g;
+    make_game(&g, &root, "flycast", "T1212N", SIGIL_SYNC_MANAGED);
+    add_option(&g, PER_GAME, "VMU A1");
+    sigil_sync_result *r = NULL;
+    if (sigil_collect(&g.req, &r) != SIGIL_ERR_DAMAGED || !r || strcmp(r->problem, "T1212N.A1.bin") != 0) {
+        fail("mvc2 unwritten fat", "collect didn't refuse the card as damaged, naming it");
+    }
+    sigil_sync_result_free(r);
+    root_free(&root);
+    free(vmu);
+}
+
 /* A save written again unchanged keeps the unit's identity; new data in it
  * doesn't. */
 static void check_identity(void) {
@@ -827,6 +848,7 @@ int main(void) {
     check_a1_only();
     check_no_target();
     check_id_file_wins();
+    check_unwritten_fat();
     check_identity();
     check_faulty_write();
     check_shared_a1();

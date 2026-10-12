@@ -384,6 +384,38 @@ data class SigilCardEntry(
 )
 ```
 
+### Repairing a damaged card
+
+When collect throws `SigilException` with `DAMAGED` for a card holding a
+corrupt save, pass the file `problem` names to `repairCard`. It fixes what
+the card's own records prove and reports the rest; it writes nothing. If
+the user agrees, keep the original, write `data` back, and collect again.
+What each format repairs is in [sync](../sync.md#damaged-files).
+
+```kotlin
+Sigil.repairCard(
+    path: String,               // required. The card file.
+    fileAccess: SigilFileAccess = PosixFileAccess,  // optional. Reads the card as (folder, name).
+): SigilCardRepair              // Throws what listCard throws for a file that isn't a card.
+
+class SigilCardRepair(
+    format: SigilCardListing.Format,  // As SigilCardListing has it.
+    data: ByteArray?,           // The whole card with every repair applied, in the form it was read;
+                                //   null when nothing was repaired.
+    entries: List<SigilCardRepairEntry>,  // Everything damaged, repaired or not.
+)
+
+data class SigilCardRepairEntry(
+    name: String,               // The save, as corruptEntries names it; "" for the card's own structures.
+    ownerId: String,
+    firstBlock: Int,
+    damage: Damage,             // ChainUnwritten, CopyDamaged (repairable), or Chain, ChainBroken,
+                                //   SizeMismatch, BlocksShared, BlocksInUse, ChecksumMismatch,
+                                //   Unverifiable.
+    repaired: Boolean,
+)
+```
+
 ## File access
 
 Every call that touches files reads, writes, lists and removes them

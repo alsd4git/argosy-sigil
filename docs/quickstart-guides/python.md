@@ -377,6 +377,38 @@ SigilCardEntry(
 )
 ```
 
+### Repairing a damaged card
+
+When collect raises `SigilDamagedError` for a card holding a corrupt save,
+pass the file `problem` names to `repair_card`. It fixes what the card's
+own records prove and reports the rest; it writes nothing. If the user
+agrees, keep the original, write `data` back, and collect again. What each
+format repairs is in [sync](../sync.md#damaged-files).
+
+```python
+sigil.repair_card(
+    path: str | PathLike,           # required. The card file.
+) -> SigilCardRepair                # Raises what list_card raises for a file that isn't a card.
+
+SigilCardRepair(
+    format: str,                    # As SigilCardListing has it.
+    data: bytes | None,             # The whole card with every repair applied, in the form it was
+                                    #   read; None when nothing was repaired.
+    entries: tuple[SigilCardRepairEntry, ...],   # Everything damaged, repaired or not.
+)
+
+SigilCardRepairEntry(
+    name: str,                      # The save, as corrupt_entries names it; "" for the card's own
+                                    #   structures.
+    owner_id: str,
+    first_block: int,
+    damage: str,                    # "chain-unwritten", "copy-damaged" (repairable), or "chain",
+                                    #   "chain-broken", "size-mismatch", "blocks-shared",
+                                    #   "blocks-in-use", "checksum-mismatch", "unverifiable".
+    repaired: bool,
+)
+```
+
 ## Helpers
 
 ```python

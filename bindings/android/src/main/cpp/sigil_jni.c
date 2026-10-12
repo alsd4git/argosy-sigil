@@ -804,6 +804,86 @@ Java_com_nendo_sigil_Sigil_nativeListCard(JNIEnv *env, jclass clazz, jstring jro
     return out;
 }
 
+static jclass g_repair_entry_class = NULL;
+static jmethodID g_repair_entry_ctor = NULL;
+static jclass g_repair_class = NULL;
+static jmethodID g_repair_ctor = NULL;
+
+static bool repair_classes_ready(void) {
+    return g_repair_entry_class && g_repair_entry_ctor && g_repair_class && g_repair_ctor && g_array_list_class &&
+           g_array_list_ctor && g_array_list_add;
+}
+
+static void load_repair_classes(JNIEnv *env) {
+    if (repair_classes_ready()) return;
+    load_card_classes(env);
+    if (!g_repair_entry_class) g_repair_entry_class = global_class(env, "com/nendo/sigil/SigilCardRepairEntry");
+    if (!g_repair_class) g_repair_class = global_class(env, "com/nendo/sigil/SigilCardRepair");
+    if (!g_repair_entry_class || !g_repair_class) return;
+    /* SigilCardRepairEntry(name, ownerId, firstBlock, damageCode, repaired) */
+    g_repair_entry_ctor = find_method(env, g_repair_entry_class, "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;IIZ)V");
+    /* SigilCardRepair(formatCode, data, entries) */
+    g_repair_ctor = find_method(env, g_repair_class, "<init>", "(I[BLjava/util/List;)V");
+}
+
+/* The report as a SigilCardRepair, or NULL with an exception pending. */
+static jobject repair_object(JNIEnv *env, const sigil_card_repair_report *report) {
+    jobject list = (*env)->NewObject(env, g_array_list_class, g_array_list_ctor);
+    for (size_t i = 0; list && i < report->entry_count; i++) {
+        const sigil_card_repair_entry *e = &report->entries[i];
+        jstring jname = save_name_string(env, e->name);
+        jstring jowner = save_name_string(env, e->owner_id);
+        jobject je = jname && jowner ? (*env)->NewObject(env, g_repair_entry_class, g_repair_entry_ctor, jname, jowner,
+                                                         (jint)e->first_block, (jint)e->damage,
+                                                         (jboolean)(e->repaired != 0))
+                                     : NULL;
+        if (je) (*env)->CallBooleanMethod(env, list, g_array_list_add, je);
+        (*env)->DeleteLocalRef(env, jname);
+        (*env)->DeleteLocalRef(env, jowner);
+        (*env)->DeleteLocalRef(env, je);
+        if (!je || (*env)->ExceptionCheck(env)) {
+            (*env)->DeleteLocalRef(env, list);
+            return NULL;
+        }
+    }
+    jbyteArray data = NULL;
+    if (list && report->data) {
+        data = (*env)->NewByteArray(env, (jsize)report->len);
+        if (data) (*env)->SetByteArrayRegion(env, data, 0, (jsize)report->len, (const jbyte *)report->data);
+    }
+    jobject out = list && (!report->data || data)
+        ? (*env)->NewObject(env, g_repair_class, g_repair_ctor, (jint)report->format, data, list)
+        : NULL;
+    (*env)->DeleteLocalRef(env, data);
+    (*env)->DeleteLocalRef(env, list);
+    return out;
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_nendo_sigil_Sigil_nativeRepairCard(JNIEnv *env, jclass clazz, jstring jroot, jstring jname,
+                                            jobject jaccess) {
+    (void)clazz;
+    if (!jroot || !jname || !jaccess) { throw_sigil(env, SIGIL_ERR_INVALID_ARG); return NULL; }
+    if (!load_access_class(env)) { throw_binding_broken(env, "SigilFileAccess"); return NULL; }
+    load_repair_classes(env);
+    if (!repair_classes_ready()) { throw_binding_broken(env, "SigilCardRepair or SigilCardRepairEntry"); return NULL; }
+    const char *name = jni_utf8(env, jname);
+    access_ctx actx = { env, jaccess, jroot };
+    sigil_io *io = name ? open_member(&actx, name) : NULL;
+    if (name) jni_free(name);
+    if (!io) { throw_sigil(env, SIGIL_ERR_IO); return NULL; }
+
+    sigil_card_repair_report *report = NULL;
+    int rc = sigil_card_repair(io, &report);
+    sigil_io_close(io);
+    if (rc != SIGIL_OK) { throw_sigil(env, rc); return NULL; }
+    jobject out = repair_object(env, report);
+    sigil_card_repair_report_free(report);
+    if (!out && !(*env)->ExceptionCheck(env)) throw_sigil(env, SIGIL_ERR_OOM);
+    return out;
+}
+
 /* ---- sync ------------------------------------------------------------------ */
 
 static void load_sync_result_class(JNIEnv *env) {

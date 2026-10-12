@@ -322,43 +322,6 @@ shared memory card or a profile folder the way `sigil_restore` does. Use
 `sigil_collect` and `sigil_restore` wherever they cover the system. Hash
 rules: [save-units.md](../save-units.md#hash).
 
-## Memory cards
-
-List the saves on a memory card or backup RAM volume: PS1 cards (the raw
-card as `.mcr`, `.mcd` or `.srm`, DexDrive `.gme`, PSP or Vita `.vmp`),
-PS2 `.ps2` file cards, GameCube raw cards, Dreamcast VMUs, and Saturn and
-Sega CD backup RAM.
-
-```c
-int sigil_card_list(
-    const sigil_io *io,             /* required. The card file. Its format is detected from the content. */
-    sigil_card_listing **out        /* required. Free with sigil_card_listing_free. */
-);                                  /* SIGIL_ERR_UNSUPPORTED_FORMAT when the stream is not a card sigil reads. */
-
-typedef struct {
-    uint32_t struct_version;
-    int format;                     /* SIGIL_CARD_FORMAT_PS1_RAW, _PS1_GME, _PS1_VMP, _PS2, _GAMECUBE_RAW,
-                                       _DREAMCAST_VMU, _SATURN_BACKUP, _SEGACD_BRAM. */
-    uint32_t total_blocks;
-    uint32_t free_blocks;           /* Blocks a new save can use. */
-    uint32_t free_slots;            /* Directory slots a new save can use. */
-    uint32_t corrupt_count;         /* Saves left out because their block chain is broken. */
-    sigil_card_entry *entries;      /* Live saves, in directory order. */
-    size_t entry_count;
-    sigil_card_entry *corrupt_entries;  /* The left-out saves the card still names; blocks is 0. */
-    size_t corrupt_entry_count;
-} sigil_card_listing;
-
-typedef struct {
-    char name[64];                  /* As stored on the card, e.g. "BASLUSP01041USCHRO00". */
-    char owner_id[16];              /* The game id the save carries, as disc identification reports it:
-                                       PS1 and PS2 "SLUS-01041", GameCube "47465A45". "" when the
-                                       format has none. */
-    uint32_t blocks;                /* In the card's own block size. */
-    uint32_t first_block;
-} sigil_card_entry;
-```
-
 ## Sync
 
 `sigil_collect` gathers one game's saves into the unit that travels to RomM;
@@ -504,6 +467,43 @@ typedef struct {
     uint32_t blocks;                /* In the card's own block size. */
     uint32_t first_block;
 } sigil_card_entry;
+```
+
+### Repairing a damaged card
+
+When collect returns `SIGIL_ERR_DAMAGED` for a card holding a corrupt
+save, pass the file `problem` names to `sigil_card_repair`. It fixes what
+the card's own records prove and reports the rest; it writes nothing. If
+the user agrees, keep the original, write `data` back, and collect again.
+What each format repairs is in [sync](../sync.md#damaged-files).
+
+```c
+int sigil_card_repair(
+    const sigil_io *io,             /* required. The card file. */
+    sigil_card_repair_report **out  /* required. Free with sigil_card_repair_report_free. */
+);                                  /* SIGIL_OK whenever the card reads, the report empty for a whole card;
+                                       the errors sigil_card_list gives otherwise. */
+
+typedef struct {
+    uint32_t struct_version;        /* SIGIL_CARD_REPAIR_V1 */
+    int format;                     /* As sigil_card_listing has it. */
+    uint8_t *data;                  /* The whole card with every repair applied, in the form it was read;
+                                       NULL when nothing was repaired. */
+    size_t len;
+    sigil_card_repair_entry *entries;  /* Everything damaged, repaired or not. */
+    size_t entry_count;
+} sigil_card_repair_report;
+
+typedef struct {
+    char name[64];                  /* The save, as corrupt_entries names it; "" for the card's own
+                                       structures. */
+    char owner_id[16];
+    uint32_t first_block;
+    int damage;                     /* SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN, _COPY_DAMAGED (repairable), or
+                                       _CHAIN, _CHAIN_BROKEN, _SIZE_MISMATCH, _BLOCKS_SHARED,
+                                       _BLOCKS_IN_USE, _CHECKSUM_MISMATCH, _UNVERIFIABLE. */
+    int repaired;                   /* 1 when data holds the fix, 0 when it can't be recovered. */
+} sigil_card_repair_entry;
 ```
 
 ## Helpers

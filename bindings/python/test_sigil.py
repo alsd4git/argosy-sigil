@@ -181,6 +181,37 @@ def test_a_broken_save_of_the_game_is_damaged_naming_the_card(tmp_path):
     assert excinfo.value.problem == "Chrono Cross.srm"
 
 
+def test_repair_card_reports_a_ps1_save_unrecoverable(tmp_path):
+    path = tmp_path / "card.mcr"
+    path.write_bytes(_broken_cross_card())
+    repair = sigil.repair_card(path)
+    assert repair.format == "ps1-raw"
+    assert repair.data is None
+    assert [(e.name, e.owner_id, e.first_block, e.damage, e.repaired) for e in repair.entries] == [
+        ("BASLUSP01041CROSS", "SLUS-01041", 1, "chain", False)
+    ]
+
+
+_MVC2_VMU = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/dc/files/mvc2-unwritten-fat-vmu/T1212N.A1.bin"
+
+
+@pytest.mark.skipif(not _MVC2_VMU.exists(), reason="Dreamcast sample missing")
+def test_repair_card_rebuilds_an_unwritten_vmu_chain_and_collect_then_reads_it(tmp_path):
+    (tmp_path / "T1212N.A1.bin").write_bytes(_MVC2_VMU.read_bytes())
+    mvc2 = sigil.SigilResult.persisted("dc", "T1212N", "T1212N", 0)
+    options = {"reicast_per_content_vmus": "VMU A1"}
+    with pytest.raises(sigil.SigilDamagedError):
+        sigil.collect(mvc2, "flycast", "Marvel vs. Capcom 2 (USA).gdi", tmp_path, options=options)
+    repair = sigil.repair_card(tmp_path / "T1212N.A1.bin")
+    assert [(e.name, e.first_block, e.damage, e.repaired) for e in repair.entries] == [
+        ("MVLVSCP2_SYS", 199, "chain-unwritten", True)
+    ]
+    assert repair.data is not None and len(repair.data) == 131072
+    (tmp_path / "T1212N.A1.bin").write_bytes(repair.data)
+    unit = sigil.collect(mvc2, "flycast", "Marvel vs. Capcom 2 (USA).gdi", tmp_path, options=options)
+    assert unit.data is not None
+
+
 _RAW_USA = Path(__file__).resolve().parents[2] / "tests/fixtures/saves/ngc/files/card-raw-usa/memcard-image.raw"
 
 

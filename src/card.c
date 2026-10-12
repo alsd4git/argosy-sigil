@@ -79,3 +79,99 @@ void sigil_card_listing_free(sigil_card_listing *listing) {
     free(listing->corrupt_entries);
     free(listing);
 }
+
+int sigil_card_repair_note(sigil_card_repair_report *report, const char *name, const char *owner_id,
+                           uint32_t first_block, int damage, bool repaired) {
+    sigil_card_repair_entry *grown = (sigil_card_repair_entry *)realloc(
+        report->entries, (report->entry_count + 1) * sizeof(*grown));
+    if (!grown) return SIGIL_ERR_OOM;
+    report->entries = grown;
+    sigil_card_repair_entry *e = &grown[report->entry_count++];
+    memset(e, 0, sizeof(*e));
+    snprintf(e->name, sizeof(e->name), "%s", name ? name : "");
+    snprintf(e->owner_id, sizeof(e->owner_id), "%s", owner_id ? owner_id : "");
+    e->first_block = first_block;
+    e->damage = damage;
+    e->repaired = repaired ? 1 : 0;
+    return SIGIL_OK;
+}
+
+/* A format sigil can't repair: each save the listing leaves out is
+ * unrecoverable, one the card doesn't name with an empty name. */
+static int report_listing(const sigil_card_listing *listing, sigil_card_repair_report *report) {
+    int rc = SIGIL_OK;
+    for (size_t i = 0; rc == SIGIL_OK && i < listing->corrupt_entry_count; i++) {
+        const sigil_card_entry *e = &listing->corrupt_entries[i];
+        rc = sigil_card_repair_note(report, e->name, e->owner_id, e->first_block, SIGIL_CARD_DAMAGE_CHAIN, false);
+    }
+    for (size_t i = listing->corrupt_entry_count; rc == SIGIL_OK && i < listing->corrupt_count; i++) {
+        rc = sigil_card_repair_note(report, NULL, NULL, 0, SIGIL_CARD_DAMAGE_CHAIN, false);
+    }
+    return rc;
+}
+
+/* Repairs `image` in place with `repair`; on a fix the report takes the image. */
+static int repair_image(uint8_t *image, size_t size, sigil_card_repair_report *report,
+                        int (*repair)(uint8_t *, size_t, sigil_card_repair_report *, bool *)) {
+    bool changed = false;
+    int rc = repair(image, size, report, &changed);
+    if (rc == SIGIL_OK && changed) {
+        report->data = image;
+        report->len = size;
+        return SIGIL_OK;
+    }
+    free(image);
+    return rc;
+}
+
+static int repair_vmu(uint8_t *image, size_t size, sigil_card_repair_report *report, bool *changed) {
+    (void)size;
+    return sigil_dreamcast_card_repair(image, report, changed);
+}
+
+static int repair_gamecube(uint8_t *image, size_t size, sigil_card_repair_report *report, bool *changed) {
+    return sigil_gamecube_card_repair(image, size, report, changed);
+}
+
+int sigil_card_repair(const sigil_io *io, sigil_card_repair_report **out) {
+    if (!io || !io->read || !out) return SIGIL_ERR_INVALID_ARG;
+    *out = NULL;
+    sigil_card_listing *listing = NULL;
+    int rc = sigil_card_list(io, &listing);
+    if (rc != SIGIL_OK) return rc;
+    sigil_card_repair_report *report = (sigil_card_repair_report *)calloc(1, sizeof(*report));
+    if (!report) {
+        sigil_card_listing_free(listing);
+        return SIGIL_ERR_OOM;
+    }
+    report->struct_version = SIGIL_CARD_REPAIR_V1;
+    report->format = listing->format;
+
+    if (listing->format == SIGIL_CARD_FORMAT_DREAMCAST_VMU) {
+        uint8_t *image = (uint8_t *)malloc(VMU_CARD_SIZE);
+        rc = image ? sigil_dreamcast_card_load(io, image) : SIGIL_ERR_OOM;
+        if (rc == SIGIL_OK) rc = repair_image(image, VMU_CARD_SIZE, report, repair_vmu);
+        else free(image);
+    } else if (listing->format == SIGIL_CARD_FORMAT_GAMECUBE_RAW) {
+        uint8_t *image = NULL;
+        size_t size = 0;
+        rc = sigil_gamecube_card_load(io, &image, &size);
+        if (rc == SIGIL_OK) rc = repair_image(image, size, report, repair_gamecube);
+    } else {
+        rc = report_listing(listing, report);
+    }
+    sigil_card_listing_free(listing);
+    if (rc != SIGIL_OK) {
+        sigil_card_repair_report_free(report);
+        return rc;
+    }
+    *out = report;
+    return SIGIL_OK;
+}
+
+void sigil_card_repair_report_free(sigil_card_repair_report *report) {
+    if (!report) return;
+    free(report->data);
+    free(report->entries);
+    free(report);
+}

@@ -89,6 +89,11 @@ It refuses with `SIGIL_ERR_INVALID_ARG`, writing nothing, when it must remove a 
 `sigil_card_list` reads a GameCube raw card as `SIGIL_CARD_FORMAT_GAMECUBE_RAW`.
 Each entry's `owner_id` is the game id as disc identification reports it, such as `"47465A45"`.
 
+`sigil_card_repair` restores a directory or block table copy that fails
+its checksum from the copy that passes, as the SDK's `__CARDCheck` does.
+A save whose chain only the damaged copy held is reported unrecoverable.
+See [sync](../sync.md#damaged-files) for the flow.
+
 GameCube-specific refusals, on top of the general ones in [Sync](../sync.md):
 
 | Code | When | `problem` |

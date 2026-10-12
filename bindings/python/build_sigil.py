@@ -308,6 +308,41 @@ typedef struct {
 int  sigil_card_list(const sigil_io *io, sigil_card_listing **out);
 void sigil_card_listing_free(sigil_card_listing *listing);
 
+typedef enum {
+    SIGIL_CARD_DAMAGE_CHAIN = 1,
+    SIGIL_CARD_DAMAGE_CHAIN_UNWRITTEN,
+    SIGIL_CARD_DAMAGE_CHAIN_BROKEN,
+    SIGIL_CARD_DAMAGE_SIZE_MISMATCH,
+    SIGIL_CARD_DAMAGE_BLOCKS_SHARED,
+    SIGIL_CARD_DAMAGE_BLOCKS_IN_USE,
+    SIGIL_CARD_DAMAGE_CHECKSUM_MISMATCH,
+    SIGIL_CARD_DAMAGE_UNVERIFIABLE,
+    SIGIL_CARD_DAMAGE_COPY_DAMAGED,
+    ...
+} sigil_card_damage;
+
+typedef struct {
+    char     name[...];
+    char     owner_id[...];
+    uint32_t first_block;
+    int      damage;
+    int      repaired;
+} sigil_card_repair_entry;
+
+#define SIGIL_CARD_REPAIR_V1 ...
+
+typedef struct {
+    uint32_t                 struct_version;
+    int                      format;
+    uint8_t                 *data;
+    size_t                   len;
+    sigil_card_repair_entry *entries;
+    size_t                   entry_count;
+} sigil_card_repair_report;
+
+int  sigil_card_repair(const sigil_io *io, sigil_card_repair_report **out);
+void sigil_card_repair_report_free(sigil_card_repair_report *report);
+
 #define SIGIL_SYNC_REQUEST_V1 ...
 #define SIGIL_SYNC_RESULT_V1 ...
 
