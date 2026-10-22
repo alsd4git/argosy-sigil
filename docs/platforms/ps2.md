@@ -7,7 +7,10 @@ sigil reads the disc's serial, finds the memory cards for the layouts below, and
 
 | Slug | Inputs | `title_id` example | `usage` |
 |---|---|---|---|
-| `ps2` | `.iso`, `.chd` | `SLUS-20675` | folder-prefix |
+| `ps2` | `.iso`, `.chd`, `.bin` | `SLUS-20675` | folder-prefix |
+
+BIN inputs may contain cooked 2048-byte sectors or raw 2352-byte MODE1/MODE2
+sectors. Pass the BIN track itself; CUE entry-point parsing is not supported.
 
 **PS2 adds a region prefix and enumerates folders by prefix.** `title_id` is the
 ROM serial (`SLUS-20152`). `save_id` is the region-prefixed stem
