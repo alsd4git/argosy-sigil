@@ -54,6 +54,32 @@ static uint8_t *make_ncsd(size_t *len, uint32_t partition0) {
     return b;
 }
 
+/* Section sizes from a real CIA: ticket and TMD are not multiples of 0x40, so
+ * content 0 lands at AlignUp only if every section boundary is aligned. */
+#define CIA_HEADER_SIZE   0x2020u
+#define CIA_CERT_SIZE     0x0A00u
+#define CIA_TIK_SIZE      0x0350u
+#define CIA_TMD_SIZE      0x0B64u
+#define CIA_CONTENT0      0x3940u
+
+static uint8_t *make_cia(size_t *len, bool content0_present, bool encrypted) {
+    size_t n = CIA_CONTENT0 + NCCH_PROGRAM_ID_OFFSET + 8 + 0x100;
+    uint8_t *b = (uint8_t *)calloc(1, n);
+    fx_put_le32(b + 0x00, CIA_HEADER_SIZE);
+    fx_put_le32(b + 0x08, CIA_CERT_SIZE);
+    fx_put_le32(b + 0x0C, CIA_TIK_SIZE);
+    fx_put_le32(b + 0x10, CIA_TMD_SIZE);
+    if (content0_present) b[0x20] = 0x80;
+    if (encrypted) {
+        memset(b + CIA_CONTENT0, 0xA5, 0x200);
+    } else {
+        memcpy(b + CIA_CONTENT0 + NCSD_MAGIC_OFFSET, "NCCH", 4);
+        memcpy(b + CIA_CONTENT0 + NCCH_PROGRAM_ID_OFFSET, PROGRAM_ID, 8);
+    }
+    *len = n;
+    return b;
+}
+
 static uint8_t *make_3dsx(size_t *len) {
     size_t n = 0x100;
     uint8_t *b = (uint8_t *)calloc(1, n);
@@ -213,6 +239,18 @@ int main(void) {
     size_t   hb_len = len;
     expect_no_serial("3dsx homebrew", hb, hb_len, "hello.3dsx");
 
+    uint8_t *cia = make_cia(&len, true, false);
+    size_t   cia_len = len;
+    expect_title("cia content 0 ncch after aligned sections", cia, cia_len, "game.cia");
+
+    uint8_t *cia_enc = make_cia(&len, true, true);
+    expect_no_serial("cia with encrypted content 0", cia_enc, len, "game.cia");
+    free(cia_enc);
+
+    uint8_t *cia_absent = make_cia(&len, false, false);
+    expect_no_serial("cia without content 0", cia_absent, len, "game.cia");
+    free(cia_absent);
+
     wrapped("z3ds wraps ncsd, no metadata", ncsd_stock, ncsd_stock_len, "NCSD",
             NULL, 0, 0, "game.z3ds", true);
     wrapped("z3ds wraps ncsd, metadata + multi-frame", ncsd_tab, ncsd_tab_len, "NCSD",
@@ -223,6 +261,10 @@ int main(void) {
             meta, sizeof(meta), 0, "mislabelled.z3ds", true);
     wrapped("z3dsx wraps homebrew", hb, hb_len, "3DSX",
             NULL, 0, 0, "hello.z3dsx", false);
+    wrapped("zcia wraps cia, metadata + multi-frame", cia, cia_len, "CIA",
+            meta, sizeof(meta), 0x1000, "game.zcia", true);
+    wrapped("cia underlying magic beats extension", cia, cia_len, "CIA",
+            NULL, 0, 0, "mislabelled.zcci", true);
 
     /* A wrapper header whose payload offset ignored metadata_size would start
      * decompression inside the metadata block and decode nothing. */
@@ -253,6 +295,7 @@ int main(void) {
     free(ncch_alpha);
     free(ncch_bare);
     free(hb);
+    free(cia);
 
     if (failures) {
         fprintf(stderr, "unit_3ds: %d failure(s)\n", failures);

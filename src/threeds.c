@@ -19,6 +19,16 @@
 #define NCCH_PROGRAM_ID_OFFSET    0x118
 #define PROGRAM_ID_LEN            8
 
+/* CIA (azahar src/core/file_sys/cia_container.h:26-55, little-endian):
+ *   0x00 header_size u32  0x08 cert_size u32  0x0C tik_size u32
+ *   0x10 tmd_size u32     0x20 content_present[0x2000], index 0 = 0x80 of byte 0
+ * Sections start on 0x40 boundaries (cia_container.cpp:245-267), so content 0
+ * opens at AlignUp(tmd_off + tmd_size). Saves key on that NCCH's program id
+ * (archive_source_sd_savedata.cpp:21-29), not the TMD title id. */
+#define CIA_HEADER_PREFIX         0x21
+#define CIA_SECTION_ALIGNMENT     0x40u
+#define CIA_CONTENT_PRESENT       0x20
+
 /* Z3DS wrapper (azahar src/common/file_derived.h, struct Z3DSFileHeader,
  * static_assert sizeof == 0x20). Fields are written as a raw struct dump
  * (file_derived.cpp:512), so every scalar is host-native little-endian:
@@ -39,6 +49,7 @@ typedef enum {
     THREEDS_INNER_NCSD,
     THREEDS_INNER_NCCH,
     THREEDS_INNER_HOMEBREW,
+    THREEDS_INNER_CIA,
 } threeds_inner;
 
 typedef struct {
@@ -163,6 +174,7 @@ static threeds_inner inner_from_magic(const uint8_t magic[4]) {
     if (memcmp(magic, "NCSD", 4) == 0) return THREEDS_INNER_NCSD;
     if (memcmp(magic, "NCCH", 4) == 0) return THREEDS_INNER_NCCH;
     if (memcmp(magic, "3DSX", 4) == 0) return THREEDS_INNER_HOMEBREW;
+    if (memcmp(magic, "CIA\0", 4) == 0) return THREEDS_INNER_CIA;
     return THREEDS_INNER_UNKNOWN;
 }
 
@@ -188,7 +200,42 @@ static threeds_inner inner_from_ext(const char *ext) {
         || strcmp(ext, "elf") == 0 || strcmp(ext, "axf") == 0) {
         return THREEDS_INNER_HOMEBREW;
     }
+    if (strcmp(ext, "cia") == 0 || strcmp(ext, "zcia") == 0) return THREEDS_INNER_CIA;
     return THREEDS_INNER_NCSD;
+}
+
+static bool cia_align_add(uint64_t *off, uint32_t size) {
+    uint64_t end = *off + size;
+    uint64_t aligned = (end + CIA_SECTION_ALIGNMENT - 1) & ~(uint64_t)(CIA_SECTION_ALIGNMENT - 1);
+    if (aligned < *off) return false;
+    *off = aligned;
+    return true;
+}
+
+static int cia_content0_offset(threeds_image *img, uint64_t *out) {
+    uint8_t head[CIA_HEADER_PREFIX];
+    int rc = image_read(img, 0, head, sizeof(head));
+    if (rc != SIGIL_OK) return rc;
+
+    uint32_t header_size = sigil_read_le32(head);
+    if (header_size < CIA_HEADER_PREFIX) return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    if (!(head[CIA_CONTENT_PRESENT] & 0x80)) return SIGIL_ERR_NOT_FOUND;
+
+    uint64_t off = 0;
+    if (!cia_align_add(&off, header_size)
+        || !cia_align_add(&off, sigil_read_le32(head + 0x08))
+        || !cia_align_add(&off, sigil_read_le32(head + 0x0C))
+        || !cia_align_add(&off, sigil_read_le32(head + 0x10))) {
+        return SIGIL_ERR_UNSUPPORTED_FORMAT;
+    }
+
+    uint8_t magic[4];
+    rc = image_read(img, off + NCCH_MAGIC_OFFSET, magic, sizeof(magic));
+    if (rc != SIGIL_OK) return rc;
+    if (memcmp(magic, "NCCH", 4) != 0) return SIGIL_ERR_NOT_FOUND;
+
+    *out = off;
+    return SIGIL_OK;
 }
 
 static uint64_t ncsd_partition0_offset(threeds_image *img) {
@@ -207,7 +254,13 @@ static uint64_t ncsd_partition0_offset(threeds_image *img) {
 }
 
 static int read_program_id(threeds_image *img, threeds_inner inner, uint8_t out[PROGRAM_ID_LEN]) {
-    uint64_t ncch_off = (inner == THREEDS_INNER_NCSD) ? ncsd_partition0_offset(img) : 0;
+    uint64_t ncch_off = 0;
+    if (inner == THREEDS_INNER_NCSD) {
+        ncch_off = ncsd_partition0_offset(img);
+    } else if (inner == THREEDS_INNER_CIA) {
+        int rc = cia_content0_offset(img, &ncch_off);
+        if (rc != SIGIL_OK) return rc;
+    }
     return image_read(img, ncch_off + NCCH_PROGRAM_ID_OFFSET, out, PROGRAM_ID_LEN);
 }
 

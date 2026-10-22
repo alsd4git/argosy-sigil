@@ -6,7 +6,7 @@ Status: synced
 
 | Slug | Platform | Inputs | `title_id` example | `usage` | Status |
 |---|---|---|---|---|---|
-| `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.z3ds`, `.zcci`, `.zcxi` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
+| `3ds` | Nintendo 3DS | `.3ds`, `.cci`, `.cxi`, `.app`, `.cia`, `.z3ds`, `.zcci`, `.zcxi`, `.zcia` | `0004000000123456` | folder-split | `.3dsx` / `.z3dsx` / `.elf` / `.axf` are homebrew and carry no title id |
 
 Callers may pass `n3ds` for `3ds`.
 
@@ -37,7 +37,12 @@ for CIA/homebrew workflows.
 
 **3DS container shapes.** NCSD images (`.3ds`, `.cci`) hold the
 program id inside partition 0's NCCH; NCCH images (`.cxi`, `.app`)
-hold it at +0x118 of the file itself. The `z`-prefixed extensions are
+hold it at +0x118 of the file itself. A CIA (`.cia`) is an install
+package: its header, certificate chain, ticket and TMD each start on a
+0x40 boundary, and content 0's NCCH follows the TMD. Sigil reads the
+program id from that NCCH, because Azahar keys the save folder by the
+running NCCH's program id, not by the TMD title id. A CIA whose content 0
+is encrypted, or marked absent, yields no id. The `z`-prefixed extensions are
 an Azahar Z3DS wrapper (a 0x20-byte header, then metadata, then a
 seekable-zstd payload), and the wrapper's `underlying_magic` names the
 inner container, so a mislabelled extension still resolves. `.3dsx`,

@@ -151,6 +151,8 @@ static sigil_platform sniff_from_extension(const char *filename) {
     if (strcmp(ext, "app") == 0)   return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "3dsx") == 0)  return SIGIL_PLATFORM_3DS;
     if (strcmp(ext, "z3dsx") == 0) return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "cia") == 0)   return SIGIL_PLATFORM_3DS;
+    if (strcmp(ext, "zcia") == 0)  return SIGIL_PLATFORM_3DS;
     /* GameCube dumps use these same extensions, so for `.rvz`/`.wia`/`.wbfs` this
      * picks the shared reader rather than the console. Which console it is
      * comes from the disc header magic, or from the caller when it named one. */

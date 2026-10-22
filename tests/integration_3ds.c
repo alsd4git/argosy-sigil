@@ -110,7 +110,7 @@ int main(void) {
     if (!rom_dir) { fprintf(stderr, "SIGIL_ROM_DIR not set; skipping\n"); return TEST_SKIP; }
     char path[512];
     if (build_subdir(rom_dir, "3ds", path) != 0) return 1;
-    const char *exts[] = { "3ds", "cci", "z3ds", "zcci", "cxi", "zcxi", "app", NULL };
+    const char *exts[] = { "3ds", "cci", "z3ds", "zcci", "cxi", "zcxi", "app", "cia", "zcia", NULL };
     walk_stats st = walk_dir(path, check, exts);
     fprintf(stdout, "3DS: processed=%d passed=%d failed=%d\n",
             st.processed, st.passed, st.failed);
